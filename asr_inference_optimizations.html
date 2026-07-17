@@ -1,0 +1,1455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Production ASR Inference: Optimizations &amp; Decoding Tricks</title>
+<style>
+:root{
+  --bg:#ffffff;--surface:#f8fafc;--surface2:#f1f5f9;--border:#e2e8f0;--border2:#cbd5e1;
+  --accent:#2563eb;--accent-bg:#eff6ff;--accent-light:#bfdbfe;
+  --green:#059669;--green-bg:#ecfdf5;--green-light:#a7f3d0;
+  --amber:#d97706;--amber-bg:#fffbeb;--amber-light:#fde68a;
+  --purple:#7c3aed;--purple-bg:#f5f3ff;--purple-light:#ddd6fe;
+  --red:#dc2626;--red-bg:#fef2f2;
+  --text:#0f172a;--text2:#334155;--muted:#64748b;
+  --code-bg:#f1f5f9;--code-text:#1e293b;
+  --shadow:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.06);
+  --shadow-md:0 4px 6px rgba(0,0,0,.07),0 2px 4px rgba(0,0,0,.06);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;font-size:16px;line-height:1.75;overflow-x:hidden}
+
+/* ── HEADER ── */
+header{background:linear-gradient(135deg,#0f172a 0%,#1e1b4b 50%,#0f172a 100%);padding:80px 24px 64px;text-align:center;position:relative;overflow:hidden}
+#waveCanvas{position:absolute;inset:0;width:100%;height:100%;opacity:.35;pointer-events:none}
+.header-content{position:relative;z-index:1}
+.eyebrow{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.1);color:#93c5fd;border:1px solid rgba(255,255,255,.2);border-radius:20px;padding:4px 14px;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-bottom:20px}
+h1{font-size:clamp(28px,5vw,52px);font-weight:900;color:#f8fafc;line-height:1.1;max-width:820px;margin:0 auto 20px;letter-spacing:-.03em}
+h1 span{background:linear-gradient(135deg,#60a5fa,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.subtitle{color:#94a3b8;font-size:17px;max-width:600px;margin:0 auto 32px;line-height:1.6}
+.meta-row{display:flex;justify-content:center;gap:20px;flex-wrap:wrap;font-size:13px;color:#64748b}
+.meta-row span{display:flex;align-items:center;gap:5px;color:#94a3b8}
+
+/* ── LAYOUT ── */
+main{max-width:900px;margin:0 auto;padding:64px 24px 96px}
+
+/* ── TOC ── */
+.toc{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:28px 32px;margin-bottom:64px;position:relative;overflow:hidden}
+.toc::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(to right,var(--accent),var(--purple))}
+.toc-title{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:20px}
+.toc ol{list-style:none;display:grid;grid-template-columns:1fr 1fr;gap:0 40px;counter-reset:toc}
+.toc li{counter-increment:toc;font-size:14px;color:var(--text2);display:flex;gap:12px;align-items:center;padding:9px 0;border-bottom:1px solid var(--border)}
+.toc li:last-child,.toc li:nth-last-child(2):nth-child(odd){border-bottom:none}
+.toc li::before{content:counter(toc,decimal-leading-zero);font-size:11px;font-weight:800;color:var(--accent);flex-shrink:0;min-width:20px}
+.toc a{color:var(--text2);text-decoration:none;font-weight:500}.toc a:hover{color:var(--accent)}
+
+/* ── SECTIONS ── */
+section{margin-bottom:72px;scroll-margin-top:24px}
+.section-header{display:flex;align-items:center;gap:10px;margin-bottom:20px}
+.section-num{font-size:10px;font-weight:800;color:#fff;background:var(--accent);letter-spacing:.08em;padding:3px 9px;border-radius:5px;flex-shrink:0}
+h2{font-size:23px;font-weight:800;color:var(--text);letter-spacing:-.02em}
+h3{font-size:16px;font-weight:700;color:var(--text);margin:32px 0 12px;padding-left:12px;border-left:3px solid var(--accent-light)}
+p{color:var(--text2);margin-bottom:16px;line-height:1.75}
+.lead{font-size:17px;color:var(--text2);margin-bottom:24px;line-height:1.7}
+
+/* ── CALLOUTS ── */
+.callout{border-left:4px solid var(--accent);background:var(--accent-bg);border-radius:0 8px 8px 0;padding:16px 20px;margin:24px 0;font-size:14px;color:var(--text2);line-height:1.65}
+.callout.green{border-left-color:var(--green);background:var(--green-bg)}
+.callout.amber{border-left-color:var(--amber);background:var(--amber-bg)}
+.callout.purple{border-left-color:var(--purple);background:var(--purple-bg)}
+.callout strong{color:var(--text)}
+
+/* ── CARDS ── */
+.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;margin:24px 0}
+.card{background:#fff;border:1px solid var(--border);border-top:3px solid var(--accent);border-radius:10px;padding:20px;transition:box-shadow .2s,transform .2s}
+.card:hover{box-shadow:var(--shadow-md);transform:translateY(-2px)}
+.card-head{font-size:14px;font-weight:700;color:var(--text);margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.pill{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;letter-spacing:.04em}
+.pill-blue{background:var(--accent-bg);color:var(--accent)}
+.pill-green{background:var(--green-bg);color:var(--green)}
+.pill-amber{background:var(--amber-bg);color:var(--amber)}
+.pill-purple{background:var(--purple-bg);color:var(--purple)}
+.card p{font-size:14px;color:var(--muted);margin-bottom:0;line-height:1.6}
+
+/* ── CODE ── */
+code{background:var(--code-bg);color:#be185d;padding:1px 6px;border-radius:4px;font-size:.87em;font-family:'JetBrains Mono','Fira Code',monospace}
+pre{background:var(--code-bg);border:1px solid var(--border);border-radius:8px;padding:18px 20px;overflow-x:auto;margin:16px 0;font-size:13px;font-family:'JetBrains Mono','Fira Code',monospace;color:var(--code-text);line-height:1.65}
+pre .c{color:#94a3b8;font-style:italic}
+pre .k{color:var(--purple);font-weight:600}
+pre .s{color:var(--green)}
+pre .n{color:#0369a1}
+
+/* ── TABLES ── */
+.table-wrap{overflow-x:auto;margin:20px 0;border-radius:10px;border:1px solid var(--border)}
+table{width:100%;border-collapse:collapse;font-size:14px}
+thead th{background:var(--surface2);color:var(--text);font-weight:700;font-size:12px;letter-spacing:.05em;text-transform:uppercase;padding:10px 14px;text-align:left;border-bottom:2px solid var(--border2)}
+tbody td{padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text2);vertical-align:top}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover td{background:var(--surface)}
+td.num{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+td.good{color:var(--green);font-weight:700}
+td.warn{color:var(--amber);font-weight:700}
+td.dim{color:var(--muted)}
+
+/* ── STEPS ── */
+.steps{list-style:none;display:flex;flex-direction:column;gap:20px;margin:20px 0}
+.steps li{display:flex;gap:16px;align-items:flex-start}
+.step-num{flex-shrink:0;width:26px;height:26px;border-radius:50%;background:var(--accent);color:#fff;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;margin-top:3px}
+.step-body strong{display:block;color:var(--text);font-size:15px;margin-bottom:3px}
+.step-body p{font-size:14px;color:var(--muted);margin-bottom:0}
+
+/* ── STATS ── */
+.stat-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:14px;margin:24px 0}
+.stat{background:#fff;border:1px solid var(--border);border-top:3px solid var(--border2);border-radius:10px;padding:20px 18px 16px;text-align:center;transition:box-shadow .15s}
+.stat:hover{box-shadow:var(--shadow-md)}
+.stat-val{font-size:34px;font-weight:900;color:var(--text);letter-spacing:-.03em;line-height:1;margin-bottom:8px}
+.stat-val.green{color:var(--green)}.stat-val.blue{color:var(--accent)}.stat-val.amber{color:var(--amber)}.stat-val.purple{color:var(--purple)}
+.stat-label{font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em;line-height:1.4}
+
+/* ── BADGES ── */
+.badge-row{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}
+.badge{background:var(--surface2);border:1px solid var(--border2);border-radius:6px;padding:4px 12px;font-size:13px;font-weight:600;color:var(--text2)}
+
+/* ── FEATURE LIST ── */
+.feature-list{list-style:none;margin:20px 0}
+.feature-list li{padding:16px 0;border-bottom:1px solid var(--border);display:flex;gap:14px;align-items:flex-start}
+.feature-list li:last-child{border-bottom:none;padding-bottom:0}
+.fl-dot{width:8px;height:8px;background:var(--accent);border-radius:50%;flex-shrink:0;margin-top:7px}
+.fl-content{flex:1;min-width:0}
+.fl-title{font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.fl-body{font-size:14px;color:var(--muted);line-height:1.65;margin:0}
+
+/* ── INTERACTIVE DEMOS ── */
+.demo-box{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;margin:24px 0;position:relative;overflow:hidden}
+.demo-box::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(to right,var(--accent),var(--purple))}
+.demo-title{font-size:15px;font-weight:700;color:var(--text);margin-bottom:16px;display:flex;align-items:center;gap:10px}
+.demo-title::before{content:'DEMO';font-size:9px;font-weight:800;letter-spacing:.1em;color:var(--accent);background:var(--accent-bg);padding:2px 8px;border-radius:4px;border:1px solid var(--accent-light);flex-shrink:0}
+
+/* logprob bars */
+.lp-chart{display:flex;flex-direction:column;gap:6px;margin:12px 0}
+.lp-row{display:flex;align-items:center;gap:10px}
+.lp-label{width:110px;font-size:12px;font-weight:600;color:var(--text2);text-align:right;flex-shrink:0;font-family:'JetBrains Mono',monospace}
+.lp-bar-wrap{flex:1;background:#e2e8f0;border-radius:4px;height:22px;overflow:hidden;position:relative}
+.lp-bar{height:100%;border-radius:4px;transition:width .5s cubic-bezier(.4,0,.2,1),background .5s;display:flex;align-items:center;padding-left:8px;font-size:11px;font-weight:700;color:#fff;min-width:0;white-space:nowrap;overflow:hidden}
+.lp-val{width:60px;font-size:12px;font-weight:700;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text2);flex-shrink:0}
+
+/* slider */
+.slider-row{display:flex;align-items:center;gap:14px;margin:16px 0}
+.slider-row label{font-size:13px;font-weight:700;color:var(--text2);width:160px;flex-shrink:0}
+input[type=range]{flex:1;accent-color:var(--accent);height:6px;cursor:pointer}
+.slider-val{width:48px;text-align:center;font-size:14px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace}
+
+/* pipeline diagram */
+.pipeline{display:flex;align-items:center;gap:0;margin:24px 0;overflow-x:auto;padding:4px 0}
+.pipe-node{background:var(--surface);border:2px solid var(--border);border-radius:10px;padding:14px 18px;text-align:center;min-width:110px;flex-shrink:0;position:relative}
+.pipe-node.active{border-color:var(--accent);background:var(--accent-bg);animation:pulse-border 2s infinite}
+.pipe-node .label{font-size:13px;font-weight:700;color:var(--text)}
+.pipe-node .sub{font-size:11px;color:var(--muted);margin-top:3px}
+.pipe-node .lat{font-size:12px;font-weight:700;color:var(--green);margin-top:3px}
+.pipe-arrow{display:flex;align-items:center;padding:0 8px;color:var(--muted);font-size:20px;flex-shrink:0}
+@keyframes pulse-border{0%,100%{box-shadow:0 0 0 0 rgba(37,99,235,.3)}50%{box-shadow:0 0 0 6px rgba(37,99,235,.08)}}
+
+/* prefix tree */
+.tree-canvas-wrap{background:var(--surface);border-radius:10px;border:1px solid var(--border);overflow:hidden;margin:12px 0}
+
+/* vocab grid */
+.vocab-grid{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0;max-height:180px;overflow-y:auto;padding:4px}
+.vocab-token{padding:3px 8px;border-radius:5px;font-size:12px;font-family:'JetBrains Mono',monospace;font-weight:600;border:1px solid transparent;transition:all .3s;cursor:default}
+
+/* waveform */
+#chunkCanvas{width:100%;border-radius:8px;border:1px solid var(--border);display:block;background:#f8fafc}
+
+/* benchmark chart */
+.bar-chart{margin:20px 0}
+.bc-row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.bc-label{width:200px;font-size:13px;font-weight:600;color:var(--text2);flex-shrink:0;text-align:right}
+.bc-track{flex:1;background:#e2e8f0;border-radius:6px;height:26px;overflow:hidden;position:relative}
+.bc-fill{height:100%;border-radius:6px;display:flex;align-items:center;padding-left:10px;font-size:12px;font-weight:700;color:#fff;transition:width 1.2s cubic-bezier(.4,0,.2,1);min-width:0;white-space:nowrap}
+.bc-num{width:80px;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;flex-shrink:0}
+
+/* scroll animation */
+.reveal{opacity:0;transform:translateY(20px);transition:opacity .6s ease,transform .6s ease}
+.reveal.visible{opacity:1;transform:none}
+
+/* token boost anim */
+.token-pulse{animation:tok-pulse .6s ease forwards}
+@keyframes tok-pulse{0%{transform:scale(1)}50%{transform:scale(1.2)}100%{transform:scale(1)}}
+
+/* frame strip */
+.frame-strip{display:flex;gap:3px;margin:12px 0;align-items:flex-end;height:80px;overflow-x:auto;padding:4px}
+.frame-bar{width:18px;border-radius:3px 3px 0 0;flex-shrink:0;transition:all .4s ease;position:relative;cursor:pointer}
+.frame-bar .frame-tip{position:absolute;bottom:calc(100% + 4px);left:50%;transform:translateX(-50%);background:var(--text);color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .2s}
+.frame-bar:hover .frame-tip{opacity:1}
+
+/* ── ALGO BLOCKS ── */
+.algo{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;padding:0 22px 16px;margin:24px 0;font-size:14px;line-height:1.65;color:var(--text2)}
+.algo-title{font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);padding:13px 22px;background:var(--accent-bg);border-bottom:1px solid var(--accent-light);display:flex;align-items:center;gap:8px;margin:0 -22px 8px}
+.algo-title::after{content:none}
+.algo > br{display:none}
+.algo > b{display:block;padding:12px 0 4px;color:var(--text);font-weight:700}
+.algo-section{font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;padding:9px 22px;display:block;border-top:1px solid var(--border);margin:10px -22px 6px}
+.algo-section.blue{color:var(--accent);background:var(--accent-bg)}
+.algo-section.amber{color:var(--amber);background:var(--amber-bg)}
+.algo-section.green{color:var(--green);background:var(--green-bg)}
+.algo-section.purple{color:var(--purple);background:var(--purple-bg)}
+.algo-section.grey{color:var(--muted);background:var(--surface2)}
+.algo-indent{padding:4px 0 3px 22px;display:block;position:relative}
+.algo-indent::before{content:'›';position:absolute;left:6px;color:var(--muted);font-weight:800;font-size:14px;line-height:1.5}
+.algo-note{font-size:12.5px;color:var(--muted);padding:6px 0 3px 22px;display:block;font-style:italic}
+.algo-arrow{color:var(--green);font-weight:700}
+.algo b{color:var(--text);font-weight:700}
+.algo em{color:var(--purple);font-weight:600;font-style:normal}
+
+/* param table inside algo */
+.param-table{width:calc(100% + 44px);border-collapse:collapse;font-size:13px;margin:10px -22px 0}
+.param-table th{background:var(--surface2);color:var(--muted);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:9px 22px;text-align:left;border-bottom:2px solid var(--border);border-top:1px solid var(--border)}
+.param-table td{padding:9px 22px;border-bottom:1px solid var(--border);vertical-align:top;color:var(--text2)}
+.param-table tr:last-child td{border-bottom:none}
+.param-table td:first-child{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--accent);white-space:nowrap}
+.param-table td:nth-child(2){font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--muted);white-space:nowrap}
+
+hr{border:none;margin:0;height:0}
+footer{border-top:1px solid var(--border);text-align:center;padding:28px 24px;color:var(--muted);font-size:13px}
+@media(max-width:640px){.card-grid{grid-template-columns:1fr}.toc ol{grid-template-columns:1fr}.stat-row{grid-template-columns:1fr 1fr}.pipeline{flex-direction:column}}
+</style>
+</head>
+<body>
+
+<header>
+<canvas id="waveCanvas"></canvas>
+<div class="header-content">
+  <div class="eyebrow">ASR Engineering · Deep Dive</div>
+  <h1>Production ASR Inference:<br/><span>Optimizations &amp; Decoding Tricks</span></h1>
+  <p class="subtitle">An interactive deep-dive into the engineering behind large-scale, real-time multilingual speech recognition — how we make it fast, accurate, and adaptable to any domain or language.</p>
+  <div class="meta-row">
+    <span>Hybrid ASR Model</span><span>·</span>
+    <span>GPU Inference Server</span><span>·</span>
+    <span>Multilingual Indian-language ASR</span>
+  </div>
+</div>
+</header>
+
+<main>
+
+<nav class="toc">
+  <div class="toc-title">Contents</div>
+  <ol>
+    <li><a href="#s1">Inference Server &amp; Architecture</a></li>
+    <li><a href="#s2">GPU Memory &amp; Batch Safety</a></li>
+    <li><a href="#s3">Long-Audio Chunking</a></li>
+    <li><a href="#s4">Blank-Token Penalty</a></li>
+    <li><a href="#s5">Language-Constrained Decoding</a></li>
+    <li><a href="#s6">Keyword Boosting &amp; Context Biasing</a></li>
+    <li><a href="#s7">Word-Level Language Boosting</a></li>
+    <li><a href="#s8">Silent-Frame Pruning</a></li>
+    <li><a href="#s9">Word Timestamps &amp; Confidence</a></li>
+    <li><a href="#s10">Python Micro-Optimizations</a></li>
+    <li><a href="#s11">Benchmark Results</a></li>
+    <li><a href="#s12">Async &amp; Concurrent Inference</a></li>
+  </ol>
+</nav>
+
+<!-- ═══════════════════════════════════════════════════════ 1 -->
+<section id="s1" class="reveal">
+<div class="section-header"><span class="section-num">01</span><h2>Inference Server &amp; Architecture</h2></div>
+
+<p class="lead">The server hosts a <strong>hybrid speech recognition model</strong> built around a single shared encoder and three independent decoders. The encoder — a deep stack of attention and convolution layers that converts raw audio into rich feature representations — is the dominant GPU cost. All three decoders consume the same encoder output and can be switched per-request with no model reload.</p>
+
+<p>The encoder runs through a GPU-compiled execution plan that fuses operations and selects the fastest compute kernels automatically. The server's dynamic batcher groups requests arriving within a 20 ms window into a single shared encoder pass — spreading the expensive GPU compute across multiple simultaneous callers.</p>
+
+<div class="demo-box">
+  <div class="demo-title">End-to-end inference pipeline</div>
+  <div class="pipeline" id="pipeline">
+    <div class="pipe-node" id="pn0"><div class="label">🎤 Audio</div><div class="sub">Raw microphone / file input</div></div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-node" id="pn1"><div class="label">Feature Extraction</div><div class="sub">Convert audio to frequency features</div></div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-node" id="pn2"><div class="label">Deep Encoder</div><div class="sub">GPU-compiled · shared across requests</div><div class="lat">~45 ms / item</div></div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-node" id="pn3"><div class="label">Decoder</div><div class="sub">Fast / Balanced / Accurate</div><div class="lat">+12–134 ms</div></div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-node" id="pn4"><div class="label">Post-processing</div><div class="sub">blank penalty · language filter · keyword boost</div></div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-node" id="pn5"><div class="label">📝 Transcript</div><div class="sub">Text + word timestamps + confidence</div></div>
+  </div>
+
+  <h3 style="margin-top:24px">Decoder comparison</h3>
+  <div class="table-wrap" style="margin-top:10px">
+    <table>
+      <thead><tr><th>Decoder</th><th>How it works</th><th>Parallelism</th><th>Latency (10 s audio)</th><th>Best for</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Fast</strong> </td><td>Scores all words at every frame at once, then picks the best one per frame in a single pass</td><td>All frames in parallel — fastest possible</td><td class="num good">57–61 ms</td><td>Real-time, latency-critical</td></tr>
+        <tr><td><strong>Balanced</strong> </td><td>Generates words one at a time but intelligently skips ahead over silence — fewer steps than the accurate decoder</td><td>Step-by-step, but skips large silent spans</td><td class="num" style="color:var(--accent);font-weight:700">72 ms</td><td>Best accuracy-speed trade-off</td></tr>
+        <tr><td><strong>Accurate</strong> </td><td>Generates words one at a time, carefully examining every audio frame — most thorough</td><td>Step-by-step through every frame</td><td class="num warn">179 ms</td><td>Maximum accuracy, offline batch</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="callout">
+  <strong>Why the fast decoder is 3× quicker than the accurate one:</strong> The shared encoder cost (~45 ms) is identical regardless of which decoder you pick. The fast decoder scores all words across all frames at once and picks the best — just ~2 ms of extra work. The accurate decoder generates words one by one, looping through every frame until a word is emitted — adding ~120 ms for a 10 s clip. The balanced decoder shortens that loop by predicting how many frames to skip after each word.
+</div>
+</section><hr/>
+
+<!-- ═══════════════════════════════════════════════════════ 2 -->
+<section id="s2" class="reveal">
+<div class="section-header"><span class="section-num">02</span><h2>GPU Memory &amp; Batch Safety</h2></div>
+<p class="lead">A single oversized batch can exhaust GPU memory and crash every subsequent request. Production systems defend at multiple levels: duration caps, pre-allocated workspace guards, and a health heartbeat decoupled from the inference path.</p>
+<ul class="feature-list">
+  <li><span class="fl-dot"></span><div class="fl-content"><div class="fl-title">Audio-Duration Cap</div><p class="fl-body">Before a batch reaches the GPU, total audio duration is summed across items. If it exceeds the threshold, the batch is split into sequential sub-batches — bounding peak activation memory regardless of how many long recordings arrive simultaneously.</p></div></li>
+  <li><span class="fl-dot"></span><div class="fl-content"><div class="fl-title">Workspace Guard</div><p class="fl-body">The step-by-step decoders reserve a fixed block of GPU memory during warm-up and lock their execution plan at that size. A hard cap of 8 items per sub-batch ensures the server never tries to use more memory than was reserved — preventing crashes from unexpected batch size spikes.</p></div></li>
+  <li><span class="fl-dot"></span><div class="fl-content"><div class="fl-title">Health Heartbeat</div><p class="fl-body">After every request the server writes a lightweight status record (GPU memory usage, call count, timestamp). A separate monitoring process reads this to report server health — without actually sending test audio — keeping health checks off the critical path.</p></div></li>
+  <li><span class="fl-dot"></span><div class="fl-content"><div class="fl-title">Dynamic Batch Tuning</div><p class="fl-body">The server batches up to 16 requests per GPU pass, preferring groups of 2, 4, 8, or 16. Reducing the maximum from 32 to 16 (part of our optimization pass) cut worst-case latency under burst traffic — smaller maximums prevent one large group from monopolizing the GPU.</p></div></li>
+</ul>
+</section><hr/>
+
+<!-- ═══════════════════════════════════════════════════════ 3 -->
+<section id="s3" class="reveal">
+<div class="section-header"><span class="section-num">03</span><h2>Long-Audio Chunking &amp; Stitching</h2></div>
+<p class="lead">Audio beyond ~20 s strains GPU memory and degrades the model's attention quality as the sequence grows longer. Rather than truncating or rejecting long recordings, audio is split at silence boundaries, decoded in overlapping chunks, and stitched together using word-level timestamps.</p>
+
+<div class="demo-box">
+  <div class="demo-title">Waveform chunking visualization</div>
+  <canvas id="chunkCanvas" height="120"></canvas>
+  <div style="display:flex;gap:12px;margin-top:12px;flex-wrap:wrap">
+    <button onclick="animateChunks()" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:8px 18px;font-size:13px;font-weight:700;cursor:pointer">▶ Animate Chunking</button>
+    <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:13px">
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;background:#2563eb;border-radius:2px;display:inline-block"></span>Chunk 1</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;background:#7c3aed;border-radius:2px;display:inline-block"></span>Chunk 2</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;background:#059669;border-radius:2px;display:inline-block"></span>Chunk 3</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;background:rgba(217,119,6,.3);border-radius:2px;display:inline-block"></span>Overlap</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;background:#e2e8f0;border-radius:2px;display:inline-block"></span>Silence</span>
+    </div>
+  </div>
+  <p style="font-size:13px;color:var(--muted);margin-top:10px;margin-bottom:0">Split points are placed at silence centres. Each chunk overlaps its predecessor by ~2 s for acoustic context. Words are attributed to chunks by absolute timestamp.</p>
+</div>
+
+<ul class="steps">
+  <li><div class="step-num">1</div><div class="step-body"><strong>Silence-aware split point</strong><p>Short-time energy < threshold for ≥ 150 ms. Split placed at the silence centre within a search window near the end of the chunk — never mid-word or mid-phoneme.</p></div></li>
+  <li><div class="step-num">2</div><div class="step-body"><strong>Overlap for acoustic context</strong><p>Each chunk starts ~2 s before the previous split point. The encoder needs preceding audio context to correctly decode words near the boundary. Overlapping decoded tokens are discarded during merge.</p></div></li>
+  <li><div class="step-num">3</div><div class="step-body"><strong>Timestamp-guided stitching</strong><p>Each chunk emits word-level timestamps. Words whose start time ≥ join point are attributed to the next chunk. Final transcript assembled chronologically from non-overlapping word sets.</p></div></li>
+</ul>
+
+<div class="callout green"><strong>Measured on 10-minute audio:</strong> Fast decoder completes in ~1.85 s. Balanced decoder in ~4.2 s (down from 7.3 s after optimization). Accurate decoder in ~10.9 s. All three scale linearly with audio duration.</div>
+</section><hr/>
+
+<!-- ═══════════════════════════════════════════════════════ 4 -->
+<section id="s4" class="reveal">
+<div class="section-header"><span class="section-num">04</span><h2>Blank-Token Penalty</h2></div>
+
+<p class="lead">At each audio frame the decoder scores every token in the vocabulary including a special <strong>blank token</strong> meaning "no speech here." When the model over-predicts silence — due to constrained vocabulary or unfamiliar acoustics — short words get silently dropped. The penalty reduces the blank score, pushing the model toward emitting real tokens.</p>
+
+<div class="demo-box">
+  <div class="demo-title">Token confidence scores — live demo</div>
+  <div class="slider-row">
+    <label>Blank penalty value</label>
+    <input type="range" id="penaltySlider" min="0" max="6" step="0.5" value="0" oninput="updatePenalty(this.value)"/>
+    <span class="slider-val" id="penaltyVal">0.0</span>
+  </div>
+  <div style="display:flex;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+    <button onclick="setPenaltyMode('flat')" id="btn-flat" style="padding:5px 14px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;background:var(--accent);color:#fff;border:none">Flat penalty</button>
+    <button onclick="setPenaltyMode('conf')" id="btn-conf" style="padding:5px 14px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;background:var(--surface2);color:var(--text2);border:1px solid var(--border)">Confidence-gated</button>
+    <button onclick="setPenaltyMode('tail')" id="btn-tail" style="padding:5px 14px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;background:var(--surface2);color:var(--text2);border:1px solid var(--border)">Tail (last 4 frames)</button>
+    <span style="font-size:12px;color:var(--muted);align-self:center;margin-left:4px" id="penaltyModeDesc">Applied to blank at every frame</span>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+    <div>
+      <div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Frame 42 (mid-utterance)</div>
+      <div class="lp-chart" id="lpChartMid"></div>
+    </div>
+    <div>
+      <div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Frame 89 (tail — user audio)</div>
+      <div class="lp-chart" id="lpChartTail"></div>
+    </div>
+  </div>
+  <div style="margin-top:14px;padding:12px 16px;background:var(--surface2);border-radius:8px;font-size:13px;color:var(--text2)" id="penaltyExplain">
+    Blank penalty = 0: no modification. The blank token dominates at frame 89 (tail), causing token drop at utterance end.
+  </div>
+</div>
+
+<h3>How it works at the tensor level</h3>
+<div class="algo">
+  <div class="algo-title">How blank penalty works — three variants</div>
+  <span class="algo-section blue">FLAT &nbsp;— penalize every frame equally</span>
+  <span class="algo-indent">For each time frame in the audio:</span>
+  <span class="algo-indent">&nbsp;&nbsp;&nbsp;&nbsp;Reduce the blank token's score by the penalty amount</span>
+  <span class="algo-note">→ Simplest form. Use when you want consistent blank suppression across the whole utterance.</span>
+  <br>
+  <span class="algo-section amber">CONFIDENCE-GATED &nbsp;— penalize only when blank is strongly dominant</span>
+  <span class="algo-indent">For each time frame:</span>
+  <span class="algo-indent">&nbsp;&nbsp;&nbsp;&nbsp;Compute gap = blank score − highest word-token score</span>
+  <span class="algo-indent">&nbsp;&nbsp;&nbsp;&nbsp;Only if gap exceeds the threshold:</span>
+  <span class="algo-indent">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Reduce blank score by penalty amount</span>
+  <span class="algo-note">→ Selective. The model must already be very committed to silence before the penalty fires.</span>
+  <br>
+  <span class="algo-section green">TAIL &nbsp;— penalize only the final N frames</span>
+  <span class="algo-indent">For each frame in the last N frames of the audio (e.g. last 15 frames ≈ 600 ms):</span>
+  <span class="algo-indent">&nbsp;&nbsp;&nbsp;&nbsp;Reduce blank score by penalty amount</span>
+  <span class="algo-indent">All earlier frames → left completely unchanged</span>
+  <span class="algo-note">→ Built for acoustic fusion. Targets the user mic segment only, leaving TTS audio unaffected.</span>
+</div>
+
+<ul class="feature-list">
+  <li><span class="fl-dot" style="background:var(--accent)"></span><div class="fl-content"><div class="fl-title"><span class="pill pill-blue">Flat</span> Uniform Penalty</div><p class="fl-body">The blank score is reduced by a fixed amount at every audio frame. Cost is under 0.1 ms. Risk: if set too high (&gt;5) it distorts genuinely silent frames. Start at 2.0–4.0 when using language constraining.</p></div></li>
+  <li><span class="fl-dot" style="background:var(--amber)"></span><div class="fl-content"><div class="fl-title"><span class="pill pill-amber">Conf</span> Confidence-Gated</div><p class="fl-body">Only fires when the gap between the blank score and the best word-token score exceeds a threshold — meaning the model is already very committed to silence. Adds ~0.5 ms. Safer for clean audio.</p></div></li>
+  <li><span class="fl-dot" style="background:var(--green)"></span><div class="fl-content"><div class="fl-title"><span class="pill pill-green">Tail</span> Acoustic Fusion</div><p class="fl-body">Applied only to the final N audio frames. Designed for voice-assistant scenarios where assistant speech is followed by user speech — penalizes exactly the low-confidence user region without touching the clean assistant segment.</p></div></li>
+</ul>
+
+<h3>Acoustic Fusion: Why the Tail Matters</h3>
+<p>In voice-assistant scenarios the server receives a single combined audio stream: the assistant's spoken response followed immediately by the user's reply. The speech recognition model was trained on clean studio-quality recordings — the assistant's synthesized speech matches this closely. The user's microphone audio, however, arrives with background noise and varied speaking style, so the model struggles to recognize it and defaults to "silence" at the end of the clip.</p>
+<div class="algo">
+  <div class="algo-title">Acoustic fusion — audio layout</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;border:2px solid var(--border);border-radius:8px;overflow:hidden;margin:8px 0 14px;font-size:13px">
+    <div style="background:var(--green-bg);border-right:2px solid var(--border);padding:14px 16px">
+      <div style="font-weight:800;color:var(--green);margin-bottom:6px">Assistant TTS Response</div>
+      <div style="color:var(--text2);font-size:12px;line-height:1.7">Clean, studio-quality audio<br>Model was trained on this distribution<br><strong>→ High confidence, normal scoring</strong></div>
+    </div>
+    <div style="background:var(--amber-bg);padding:14px 16px">
+      <div style="font-weight:800;color:var(--amber);margin-bottom:6px">User Microphone Input</div>
+      <div style="color:var(--text2);font-size:12px;line-height:1.7">Noisy, varied speaking style<br>Distribution mismatch with training data<br><strong>→ Blank token dominates → words get dropped</strong></div>
+    </div>
+  </div>
+  <span class="algo-indent">Each encoder frame covers ~40 ms of audio</span>
+  <span class="algo-indent">Setting tail penalty with N = 15 frames targets only the last ~600 ms</span>
+  <span class="algo-indent"><span class="algo-arrow">→</span> Penalizes exactly the user mic region, leaves TTS segment scored normally</span>
+</div>
+<div class="callout amber"><strong>Rule of thumb:</strong> <code>frames=15</code> covers the last ~600 ms at 40 ms/frame. Increase if user speech is still being truncated. Never use tail penalty for single-speaker standalone audio — it will cause spurious tokens at clean utterance ends.</div>
+</section><hr/>
+
+<!-- ═══════════════════════════════════════════════════════ 5 -->
+<section id="s5" class="reveal">
+<div class="section-header"><span class="section-num">05</span><h2>Language-Constrained Decoding</h2></div>
+
+<p class="lead">The model's internal word list — its <strong>vocabulary</strong> — is shared across all 9 supported languages, containing words and word-fragments from every script. Each entry is tagged with its language. When a caller specifies which languages are allowed, all entries from other languages are instantly blocked, turning the multilingual model into a focused single-language recognizer for that request.</p>
+
+<div class="demo-box">
+  <div class="demo-title">Vocabulary mask — select languages to see which tokens survive</div>
+  <div class="slider-row" style="margin-bottom:12px">
+    <label style="width:auto;margin-right:12px">Active languages:</label>
+    <div style="display:flex;gap:8px;flex-wrap:wrap" id="langButtons"></div>
+  </div>
+  <div style="font-size:12px;color:var(--muted);margin-bottom:8px" id="maskStats">Showing full vocabulary (all languages active)</div>
+  <div class="vocab-grid" id="vocabGrid"></div>
+  <div style="font-size:12px;color:var(--muted);margin-top:8px;padding:10px;background:var(--surface2);border-radius:6px" id="maskExplain">
+    Tokens shown dimmed are fully blocked — they can never appear in the output. The language mask is computed once at startup and applied in a single fast operation before each decode step.
+  </div>
+</div>
+
+<ul class="feature-list">
+  <li><span class="fl-dot"></span><div class="fl-content"><div class="fl-title">Instant Block <span style="font-size:12px;font-weight:600;color:var(--muted)">(Fast decoder)</span></div><p class="fl-body">The language filter is applied once in a single step before any decoding begins. Cost: 2–5 ms. Completely eliminates out-of-language words from the output — guaranteed.</p></div></li>
+  <li><span class="fl-dot"></span><div class="fl-content"><div class="fl-title">Rescore After Decode <span style="font-size:12px;font-weight:600;color:var(--muted)">(Default)</span></div><p class="fl-body">Decode at full speed first with no language restriction, then go back and replace any wrong-language words using scores from the fast decoder at the same time position. Lower overhead for longer speech (&ge;1 s), but can miss errors on very short or ambiguous clips.</p></div></li>
+  <li><span class="fl-dot"></span><div class="fl-content"><div class="fl-title">Enforce at Every Step <span style="font-size:12px;font-weight:600;color:var(--muted)">(Strict)</span></div><p class="fl-body">The language filter is applied inside the decoder at every single word-generation step, so wrong-language words are never even considered. More accurate for short clips or similar-sounding language pairs. The main optimization target — batching these strict-mode requests cut their latency by 47–49%.</p></div></li>
+</ul>
+
+<h3>Latency overhead per constraint type</h3>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Language constraint</th><th>Fast decoder overhead</th><th>Balanced decoder (optimized)</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Single language — Hindi (hi)</td><td class="num">+5–8 ms</td><td class="num">+20 ms</td><td class="dim">Devanagari script subset</td></tr>
+      <tr><td>Single language — Telugu (te)</td><td class="num">+8–10 ms</td><td class="num">+24–34 ms</td><td class="dim">Larger Telugu vocab → more overhead</td></tr>
+      <tr><td>Bilingual hi+en</td><td class="num">+8–12 ms</td><td class="num">+5–6 ms</td><td class="dim">Wider mask allows more candidates → decoder stays efficient</td></tr>
+      <tr><td>Bilingual te+en</td><td class="num">+8–12 ms</td><td class="num">+5–6 ms</td><td class="dim">Same effect — more candidate tokens reduce decoder stalling</td></tr>
+    </tbody>
+  </table>
+</div>
+<div class="callout"><strong>Why bilingual mode is sometimes faster than single-language:</strong> A very narrow language filter leaves the decoder with very few word options at each step. When none of those options fit the audio well, the decoder stalls and takes more steps to recover. Allowing a second language widens the candidate pool, giving the decoder more valid options and letting it move forward efficiently.</div>
+</section><hr/>
+
+<!-- ═══════════════════════════════════════════════════════ 6 -->
+<section id="s6" class="reveal">
+<div class="section-header"><span class="section-num">06</span><h2>Keyword Boosting &amp; Context Biasing</h2></div>
+
+<p class="lead">Domain-specific terms — product names, medical terms, proper nouns — are rare in training data, so the model assigns them lower confidence than everyday words even when they're spoken clearly. Context biasing corrects this by adding a bonus score whenever the decoder's output matches a path through a keyword lookup structure, nudging it toward the correct specialized term.</p>
+
+<div class="demo-box">
+  <div class="demo-title">Prefix tree traversal — animated keyword detection</div>
+  <div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+    <div style="font-size:13px;color:var(--text2)"><strong>Keyword:</strong> <code id="kwDisplay">"akshara"</code></div>
+    <button onclick="startKwAnim()" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:7px 16px;font-size:13px;font-weight:700;cursor:pointer">▶ Animate</button>
+    <button onclick="resetKwAnim()" style="background:var(--surface2);color:var(--text2);border:1px solid var(--border);border-radius:6px;padding:7px 16px;font-size:13px;font-weight:700;cursor:pointer">↺ Reset</button>
+    <select id="kwSelect" onchange="changeKw(this.value)" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);font-size:13px;background:var(--surface)">
+      <option value="akshara">akshara</option>
+      <option value="नमस्ते">नमस्ते</option>
+      <option value="doctor">doctor</option>
+    </select>
+  </div>
+  <canvas id="treeCanvas" height="220" style="width:100%;border-radius:8px;border:1px solid var(--border);background:#f8fafc;display:block"></canvas>
+  <div style="margin-top:12px">
+    <div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Word confidence scores — with and without keyword boost</div>
+    <div class="lp-chart" id="kwLpChart"></div>
+  </div>
+  <div style="font-size:13px;color:var(--text2);margin-top:10px;padding:10px 14px;background:var(--surface2);border-radius:6px" id="kwStatus">Press Animate to start step-by-step prefix tree traversal.</div>
+</div>
+
+<div class="callout">
+  <strong>How the prefix tree is built:</strong> Keywords are broken into smaller word-pieces using the same internal vocabulary as the speech model — this happens server-side, no local setup needed. Each keyword becomes a path through a prefix tree where each node represents a partial match. Silence frames act as self-loop edges, allowing the search to span silence within a keyword. The tree is built once per keyword list and reused across all requests.
+</div>
+
+<ul class="feature-list">
+  <li><span class="fl-dot"></span><div class="fl-content"><div class="fl-title">Beam Traversal</div><p class="fl-body">At each audio frame, active candidate paths advance along tree edges that match the current top-K token scores. When a path reaches a terminal node, the keyword is recorded with its accumulated score and time range. Low-scoring paths are pruned continuously to keep the search efficient.</p></div></li>
+  <li><span class="fl-dot"></span><div class="fl-content"><div class="fl-title">Entropy-Weighted Boost</div><p class="fl-body">The per-step bonus is scaled by the frame's uncertainty. More boost on ambiguous frames where the model is unsure — less on confident frames where it's already making the right choice. Separates the detection threshold from the per-step continuation bonus.</p></div></li>
+  <li><span class="fl-dot"></span><div class="fl-content"><div class="fl-title">False-Positive Filter</div><p class="fl-body">Detected keywords compete against the model's natural output for the same time region. If the model scores its own output higher than the keyword match plus a threshold, the keyword detection is discarded — preventing incorrect substitutions.</p></div></li>
+  <li><span class="fl-dot"></span><div class="fl-content"><div class="fl-title">CPU / GPU Overlap</div><p class="fl-body">In the optimized pipeline, the keyword candidate search (~20 ms of CPU work) is dispatched to a background worker thread just before the GPU decoder starts. Both run in parallel. Net residual cost: only the fast merge step (~1–2 ms) after both complete.</p></div></li>
+</ul>
+
+<div class="algo">
+  <div class="algo-title">Keyword boosting — tunable parameters</div>
+  <table class="param-table">
+    <thead><tr><th>Parameter</th><th>Default</th><th>What it controls</th></tr></thead>
+    <tbody>
+      <tr><td>boost_strength</td><td>2.5</td><td>How strongly each matched token along a keyword path is boosted. Higher = more aggressive biasing. Typical range: 2–4.</td></tr>
+      <tr><td>continuation_bonus</td><td>2.7</td><td>Slightly higher bonus applied to mid-keyword tokens to encourage the decoder to complete partial matches.</td></tr>
+      <tr><td>min_detection_score</td><td>5.0</td><td>Minimum total match score for a keyword path to be accepted. Acts as a false-positive filter.</td></tr>
+      <tr><td>beam_pruning_margin</td><td>17.0</td><td>Drop candidate keyword paths that fall more than this margin below the best active path.</td></tr>
+      <tr><td>blank_frame_threshold</td><td>0.13</td><td>Frames where blank probability exceeds this are treated as silence and skipped during matching.</td></tr>
+      <tr><td>min_token_probability</td><td>0.002</td><td>Tokens below this probability are ignored — avoids boosting noise.</td></tr>
+      <tr><td>boost_mode</td><td>entropy_weighted</td><td>Scales the boost by frame uncertainty. Uncertain frames get more boost; confident frames get less. "flat" applies the same bonus everywhere.</td></tr>
+      <tr><td>resolve_overlaps</td><td>true</td><td>If two detected keywords overlap in time, keep the one with the higher match score and discard the other.</td></tr>
+    </tbody>
+  </table>
+</div>
+</section><hr/>
+
+<!-- ═══════════════════════════════════════════════════════ 7 -->
+<section id="s7" class="reveal">
+<div class="section-header"><span class="section-num">07</span><h2>Word-Level Language Boosting</h2></div>
+
+<p class="lead">Blocking an entire language for a whole sentence is too blunt when people mix languages mid-sentence — a common pattern in multilingual India. Instead, this technique works word-by-word: for each recognized word, it detects which language the audio most resembles at that moment and boosts the scores of words from that language, without touching the rest of the sentence.</p>
+
+<div class="demo-box">
+  <div class="demo-title">Code-mixed utterance — per-word language boosting</div>
+  <div style="font-size:14px;color:var(--text2);margin-bottom:14px">Utterance: <em>"मुझे <strong>hospital</strong> जाना है"</em> &nbsp;(Hindi + English code-switch)</div>
+  <div id="wordBoostViz" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px"></div>
+  <div class="slider-row" style="margin-bottom:6px">
+    <label>lang_boost</label>
+    <input type="range" id="lbSlider" min="0" max="4" step="0.5" value="0" oninput="updateWordBoost()"/>
+    <span class="slider-val" id="lbVal">0.0</span>
+  </div>
+  <div class="slider-row">
+    <label>lang_penalty</label>
+    <input type="range" id="lpSlider" min="0" max="3" step="0.5" value="0" oninput="updateWordBoost()"/>
+    <span class="slider-val" id="lpVal">0.0</span>
+  </div>
+  <div style="font-size:13px;color:var(--text2);margin-top:10px;padding:10px 14px;background:var(--surface2);border-radius:6px" id="wbExplain">
+    Slide lang_boost to see dominant-language token probabilities increase per word. Add lang_penalty for the push-pull effect.
+  </div>
+</div>
+
+<p>Mechanically: the decoder's word scores are divided into time windows, one per recognized word. For each window, scores are summed per language using a pre-built language annotation table. The dominant language is whichever scores highest in that window. Words from that language get a boost; words from other languages get a small penalty. The silence entry is always excluded from penalization.</p>
+
+<div class="algo">
+  <div class="algo-title">Per-word language detection and boosting — algorithm</div>
+  <b>Repeat for every word in the decoded transcript:</b>
+  <br>
+  <span class="algo-section blue">Step 1 &nbsp;— detect the word's dominant language</span>
+  <span class="algo-indent">Look at all token scores within this word's time frames</span>
+  <span class="algo-indent">Sum the scores separately for each supported language</span>
+  <span class="algo-indent">Dominant language ← the language with the highest total score</span>
+  <br>
+  <span class="algo-section green">Step 2 &nbsp;— boost the dominant language</span>
+  <span class="algo-indent">For every frame that belongs to this word:</span>
+  <span class="algo-indent">&nbsp;&nbsp;&nbsp;&nbsp;Increase all tokens of the dominant language by <em>lang_boost</em> amount</span>
+  <br>
+  <span class="algo-section amber">Step 3 &nbsp;— penalize competing languages</span>
+  <span class="algo-indent">For every frame that belongs to this word:</span>
+  <span class="algo-indent">&nbsp;&nbsp;&nbsp;&nbsp;Decrease all other-language token scores by <em>lang_penalty</em> amount</span>
+  <span class="algo-indent">&nbsp;&nbsp;&nbsp;&nbsp;The blank token is always excluded from penalization</span>
+  <br>
+  <span class="algo-note">Example: "hospital" inside a Hindi sentence — English tokens get boosted in that word's frames only. The surrounding Hindi words are processed independently and left untouched.</span>
+</div>
+
+<div class="callout purple"><strong>In the optimized pipeline:</strong> the language-boosted decode step (~10 ms of CPU work) is dispatched to a background thread just before the GPU decoder starts — running in parallel with the ~30–40 ms GPU decode time. Its CPU cost is fully hidden.</div>
+</section><hr/>
+
+<!-- ═══════════════════════════════════════════════════════ 8 -->
+<section id="s8" class="reveal">
+<div class="section-header"><span class="section-num">08</span><h2>Silent-Frame Pruning</h2></div>
+<p class="lead">A typical spoken utterance is 40–70% silence at the audio frame level. The step-by-step decoders must visit every frame in sequence — so feeding them silence wastes time. Removing high-confidence silent frames before decoding shortens the sequence they need to process, cutting latency directly in proportion to how much silence was pruned.</p>
+
+<div class="demo-box">
+  <div class="demo-title">Frame-level blank probability — hover to inspect, click Prune</div>
+  <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Each bar = one audio frame (~40 ms of audio). Bar height = how strongly the model believes this frame is silence. Frames above the threshold are candidates for removal.</div>
+  <div class="frame-strip" id="frameStrip"></div>
+  <div style="display:flex;gap:12px;margin-top:10px;flex-wrap:wrap;align-items:center">
+    <button onclick="pruneFrames()" id="pruneBtn" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:7px 16px;font-size:13px;font-weight:700;cursor:pointer">✂ Prune Silent Frames</button>
+    <button onclick="resetFrames()" style="background:var(--surface2);color:var(--text2);border:1px solid var(--border);border-radius:6px;padding:7px 16px;font-size:13px;font-weight:700;cursor:pointer">↺ Reset</button>
+    <div class="slider-row" style="flex:1;margin:0">
+      <label style="width:140px">Blank threshold</label>
+      <input type="range" id="blankThreshSlider" min="0.7" max="0.99" step="0.01" value="0.9" oninput="updateFrameThresh(this.value)"/>
+      <span class="slider-val" id="blankThreshVal">0.90</span>
+    </div>
+  </div>
+  <div style="font-size:13px;color:var(--text2);margin-top:10px;padding:10px 14px;background:var(--surface2);border-radius:6px" id="pruneStatus">
+    Showing 60 audio frames (~2.4 seconds). Red frames are high-confidence silence. Press "Prune" to remove them and see the shorter sequence the decoder would receive.
+  </div>
+</div>
+
+<ul class="steps">
+  <li><div class="step-num">1</div><div class="step-body"><strong>Blank-probability screening</strong><p>The blank token's probability is computed at every frame. Frames where it exceeds the threshold are flagged as silence candidates.</p></div></li>
+  <li><div class="step-num">2</div><div class="step-body"><strong>Boundary and representative preservation</strong><p>First and last valid frames always kept. Within long silent runs, at least one evenly-spaced representative frame is retained for positional continuity.</p></div></li>
+  <li><div class="step-num">3</div><div class="step-body"><strong>Index map for timestamp recovery</strong><p>A lookup table mapping each remaining frame back to its original position in the full audio is carried alongside the pruned sequence. When a word is recognized at frame k in the pruned sequence, the original timestamp is recovered via this map — no time information is lost.</p></div></li>
+</ul>
+</section><hr/>
+
+<!-- ═══════════════════════════════════════════════════════ 9 -->
+<section id="s9" class="reveal">
+<div class="section-header"><span class="section-num">09</span><h2>Word-Level Timestamps &amp; Confidence</h2></div>
+<p class="lead">Word-level timestamps unlock subtitle synchronization, speaker alignment, and per-word quality filtering. No extra model pass is needed — the decoder already records which audio frame each word was emitted at as a byproduct of its normal operation.</p>
+
+<div class="demo-box">
+  <div class="demo-title">Word timestamp timeline visualization</div>
+  <canvas id="timestampCanvas" height="120" style="width:100%;border-radius:8px;border:1px solid var(--border);background:#f8fafc;display:block"></canvas>
+  <p style="font-size:13px;color:var(--muted);margin-top:8px;margin-bottom:0">Each block = one word. Width = duration. Colour = per-word confidence (green=high, amber=medium, red=low). Hover over words to see start/end times and scores.</p>
+</div>
+
+<ul class="feature-list">
+  <li><span class="fl-dot"></span><div class="fl-content"><div class="fl-title">Fast Decoder Timestamps</div><p class="fl-body">After decoding, duplicates are merged and silence frames removed. Each surviving word-piece maps directly to a time offset (~40 ms per audio frame). Word-pieces are grouped into full words using vocabulary boundary markers. Zero added latency — timestamps are a free byproduct of the decode step.</p></div></li>
+  <li><span class="fl-dot"></span><div class="fl-content"><div class="fl-title">Step-by-Step Decoder Timestamps</div><p class="fl-body">During the word-by-word decode loop, the audio frame index at each word emission is recorded. These frame positions are grouped into words. If silent frames were pruned earlier, the original position lookup table is used to recover the correct absolute timestamp.</p></div></li>
+  <li><span class="fl-dot"></span><div class="fl-content"><div class="fl-title">Per-Word Confidence Score</div><p class="fl-body">The model's confidence for each recognized word-piece is averaged into a per-word score. Longer words contribute more to the overall utterance score — giving a stable quality signal that can be used to flag low-confidence words for review or filtering.</p></div></li>
+</ul>
+</section><hr/>
+
+<!-- ═══════════════════════════════════════════════════════ 10 -->
+<section id="s10" class="reveal">
+<div class="section-header"><span class="section-num">10</span><h2>Python-Level Micro-Optimizations</h2></div>
+<p class="lead">The keyword matching search explores millions of partial candidate paths through the prefix tree per request. When this runs across thousands of audio frames and concurrent requests, even tiny per-step inefficiencies compound into measurable latency. These optimizations target the innermost loop.</p>
+
+<div class="badge-row">
+  <span class="badge">Compact candidate-path objects</span>
+  <span class="badge">Specialized boost closures</span>
+  <span class="badge">Faster beam pruning without array allocation</span>
+  <span class="badge">Batched vocabulary lookups</span>
+  <span class="badge">Math value caching</span>
+  <span class="badge">Thread-pool CPU/GPU overlap</span>
+</div>
+
+<ul class="feature-list">
+  <li><span class="fl-dot"></span><div class="fl-content"><div class="fl-title">Compact Candidate-Path Objects</div><p class="fl-body">Hypothesis objects number in the millions per request. Declaring all attributes up front so the runtime stores them in fixed-size slots — instead of a general-purpose dictionary — removes ~200 bytes of overhead per object and speeds up allocation by ~30%, directly cutting memory pressure in the inner loop.</p></div></li>
+  <li><span class="fl-dot"></span><div class="fl-content"><div class="fl-title">Pre-Compiled Scoring Functions</div><p class="fl-body">The scoring bonus function is selected once at request init and bound as a mode-specialized callable. Eliminates 40+ mode-comparison checks per call — a compounding saving across millions of invocations per request.</p></div></li>
+  <li><span class="fl-dot"></span><div class="fl-content"><div class="fl-title">Faster Beam Pruning</div><p class="fl-body">Beam pruning previously converted each frame's scores into a temporary array just to find the maximum. Switching to a direct scan over the existing list avoids that allocation entirely. Across thousands of frames per request, these micro-savings compound into meaningful latency reduction.</p></div></li>
+  <li><span class="fl-dot"></span><div class="fl-content"><div class="fl-title">Batched Vocabulary Lookups</div><p class="fl-body">All unique word IDs in the sequence are collected first, then resolved in a single batch call. This reduces the number of lookups from one-per-frame to one-per-unique-word — typically a 5–10× reduction on real speech.</p></div></li>
+</ul>
+
+<div class="algo">
+  <div class="algo-title">Two key micro-optimizations explained</div>
+
+  <span class="algo-section grey">Optimization 1 — Reduce memory overhead per candidate-path object</span>
+  <span class="algo-indent"><b>Problem:</b> The keyword search creates millions of partial candidate path objects per request.</span>
+  <span class="algo-indent">Each object normally carries a hidden internal dictionary for storing its attributes.</span>
+  <span class="algo-indent">That dictionary costs ~280 bytes per object — across millions of objects, this creates</span>
+  <span class="algo-indent">heavy memory pressure and slows down garbage collection significantly.</span>
+  <br>
+  <span class="algo-indent"><b>Fix:</b> Declare all attributes up front so the runtime can store them in fixed-size slots</span>
+  <span class="algo-indent">instead of a dictionary. No dictionary is allocated at all.</span>
+  <span class="algo-note">→ Result: ~80 bytes per object (saves ~200 bytes each), allocation 30% faster</span>
+  <br>
+  <span class="algo-section grey">Optimization 2 — Eliminate repeated function dispatch in the inner loop</span>
+  <span class="algo-indent"><b>Problem:</b> The scoring function must choose between modes (e.g. "entropy-weighted" vs "flat").</span>
+  <span class="algo-indent">This choice was made by comparing a mode string on every single call.</span>
+  <span class="algo-indent">That's 40+ string comparisons per call × millions of calls per request = compounding waste.</span>
+  <br>
+  <span class="algo-indent"><b>Fix:</b> Decide which scoring variant to use once at the start of each request.</span>
+  <span class="algo-indent">Bind that specific variant as a ready-to-call function.</span>
+  <span class="algo-indent">The inner loop calls it directly — no mode checking, no string comparisons.</span>
+  <span class="algo-note">→ Result: zero dispatch overhead inside the inner loop</span>
+</div>
+</section><hr/>
+
+<!-- ═══════════════════════════════════════════════════════ 11 -->
+<section id="s11" class="reveal">
+<div class="section-header"><span class="section-num">11</span><h2>Benchmark Results</h2></div>
+
+<p class="lead">All numbers measured on a ~10-second mixed multilingual clip (Telugu/Hindi/English) sent to a production inference server with a GPU-compiled encoder. End-to-end network round-trip latency, averaged over 15 timed runs (3 warmup discarded).</p>
+
+<div class="stat-row">
+  <div class="stat"><div class="stat-val green">57 ms</div><div class="stat-label">Fast decoder baseline</div></div>
+  <div class="stat"><div class="stat-val blue">72 ms</div><div class="stat-label">Balanced decoder baseline</div></div>
+  <div class="stat"><div class="stat-val amber">179 ms</div><div class="stat-label">Accurate decoder baseline</div></div>
+  <div class="stat"><div class="stat-val green">170×</div><div class="stat-label">Faster than real-time</div></div>
+  <div class="stat"><div class="stat-val blue">48.7</div><div class="stat-label">Requests/sec under load</div></div>
+  <div class="stat"><div class="stat-val">200/200</div><div class="stat-label">Stress successes</div></div>
+</div>
+
+<h3>Sequential latency — animated comparison</h3>
+<div class="demo-box">
+  <div class="demo-title">Feature overhead by scenario (click to compare strategies)</div>
+  <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap" id="benchStratBtns">
+    <button onclick="showBench('ctc')" id="bsb-ctc" style="padding:5px 14px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;background:var(--green);color:#fff;border:none">Fast decoder</button>
+    <button onclick="showBench('tdt')" id="bsb-tdt" style="padding:5px 14px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;background:var(--surface2);color:var(--text2);border:1px solid var(--border)">Balanced decoder</button>
+    <button onclick="showBench('rnnt')" id="bsb-rnnt" style="padding:5px 14px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;background:var(--surface2);color:var(--text2);border:1px solid var(--border)">Accurate decoder</button>
+  </div>
+  <div class="bar-chart" id="benchChart"></div>
+</div>
+
+<h3>Optimization impact: Baseline → Fully Optimized (Balanced decoder)</h3>
+<div class="demo-box">
+  <div class="demo-title">Before vs after each optimization — animated</div>
+  <div id="optChart" class="bar-chart"></div>
+</div>
+
+<div class="table-wrap" style="margin-top:28px">
+  <table>
+    <thead><tr><th>Optimization</th><th>Baseline</th><th>Optimized</th><th>Gain</th></tr></thead>
+    <tbody>
+      <tr><td>Hindi language constraint (strict decode mode)</td><td class="num warn">183 ms</td><td class="num good">92 ms</td><td class="num good">−49%</td></tr>
+      <tr><td>Telugu language constraint (strict decode mode)</td><td class="num warn">181 ms</td><td class="num good">96 ms</td><td class="num good">−47%</td></tr>
+      <tr><td>CPU/GPU parallel execution — full feature pipeline</td><td class="num warn">150 ms</td><td class="num good">89 ms</td><td class="num good">−41%</td></tr>
+      <tr><td>Balanced vs Fast decoder speed gap</td><td class="num warn">2.2×</td><td class="num good">1.2×</td><td class="num good">Near-identical</td></tr>
+      <tr><td>Balanced decoder — no extra features</td><td class="num warn">124 ms</td><td class="num good">72 ms</td><td class="num good">−42%</td></tr>
+      <tr><td>Throughput under stress (200 requests, 100 concurrent workers)</td><td class="num warn">22.2 req/s</td><td class="num good">48.7 req/s</td><td class="num good">+119%</td></tr>
+      <tr><td>Mean latency under stress</td><td class="num warn">3,695 ms</td><td class="num good">1,582 ms</td><td class="num good">−57%</td></tr>
+      <tr><td>Max stable throughput (Poisson arrival model)</td><td class="num warn">4 req/s</td><td class="num good">20 req/s</td><td class="num good">5×</td></tr>
+      <tr><td>10-minute audio (chunked decode path)</td><td class="num warn">7.3 s</td><td class="num good">4.2 s</td><td class="num good">−43%</td></tr>
+    </tbody>
+  </table>
+</div>
+<div class="callout green"><strong>Recommendation:</strong> Use the fast decoder for latency-critical production (57 ms, 170× faster than real-time). Choose the balanced decoder when accuracy matters and you can afford 70–90 ms — it's now only 1.2× slower than the fast decoder. Use the accurate decoder for offline or batch jobs where maximum quality is the priority (179 ms).</div>
+</section><hr/>
+
+<!-- ═══════════════════════════════════════════════════════ 12 -->
+<section id="s12" class="reveal">
+<div class="section-header"><span class="section-num">12</span><h2>Async &amp; Concurrent Inference</h2></div>
+
+<p class="lead">The server exposes three ways to call it: <strong>synchronous</strong> (wait for the result before doing anything else), <strong>async</strong> (send the request and let your application keep working while waiting), and <strong>parallel</strong> (fire multiple requests simultaneously via a worker pool). Choosing the right pattern determines whether you fully use the server's capacity or leave it under-utilized.</p>
+
+<ul class="feature-list">
+  <li><span class="fl-dot" style="background:var(--accent)"></span><div class="fl-content"><div class="fl-title"><span class="pill pill-blue">infer()</span> Synchronous</div><p class="fl-body">Blocking call — the application waits until the server returns the result. Correct for scripts, notebooks, and single-threaded batch jobs. Simple but cannot overlap with other work while waiting for the response.</p></div></li>
+  <li><span class="fl-dot" style="background:var(--green)"></span><div class="fl-content"><div class="fl-title"><span class="pill pill-green">infer_async()</span> Asyncio</div><p class="fl-body">Non-blocking coroutine for async application code. While waiting for the server response, the application is free to handle other tasks. No threads are created. Scales to many concurrent requests with minimal overhead.</p></div></li>
+  <li><span class="fl-dot" style="background:var(--purple)"></span><div class="fl-content"><div class="fl-title"><span class="pill pill-purple">infer_future()</span> Thread Pool</div><p class="fl-body">Dispatches the request to a background worker and returns a handle to the future result. Correct for synchronous code that needs to fire multiple requests at once. Up to 16 requests can be in-flight simultaneously via a shared worker pool.</p></div></li>
+</ul>
+
+<h3>API reference</h3>
+<div class="algo">
+  <div class="algo-title">Inference API — inputs and outputs</div>
+  <b>All three calling styles accept the same inputs and return the same result.</b>
+  <table class="param-table">
+    <thead><tr><th>Input</th><th>Default</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td>audio</td><td>required</td><td>16 kHz mono audio as a raw PCM array</td></tr>
+      <tr><td>lang_tags</td><td>all languages</td><td>List of permitted language codes, e.g. <code>["hi", "en"]</code>. Leave unset to allow all supported languages.</td></tr>
+      <tr><td>blank_penalty</td><td>0 (off)</td><td>Flat penalty applied to the blank token at every frame. Typical range 2–4. See §4.</td></tr>
+      <tr><td>conf_blank_penalty</td><td>off</td><td>Confidence-gated variant. Provide penalty strength and threshold. Only fires when blank is strongly dominant. See §4.</td></tr>
+      <tr><td>tail_blank_penalty</td><td>off</td><td>Tail variant for acoustic fusion. Provide penalty strength and frame count (e.g. 15 frames ≈ 600 ms). See §4.</td></tr>
+      <tr><td>context_graph</td><td>none</td><td>Pre-built keyword prefix tree for domain biasing. See §6.</td></tr>
+      <tr><td>boost_config</td><td>none</td><td>Fine-tuning parameters for keyword boost strength and filtering. See §6.</td></tr>
+      <tr><td>word_boost_params</td><td>none</td><td>Per-word language boost settings (lang_boost, lang_penalty). See §7.</td></tr>
+      <tr><td>timestamps</td><td>false</td><td>Set true to receive word-level start/end times and confidence scores in the response.</td></tr>
+      <tr><td>use_strict_lang</td><td>false</td><td>Enforce the language filter inside the decoder at every step (strict mode). More accurate for short clips or acoustically similar language pairs.</td></tr>
+    </tbody>
+  </table>
+  <span class="algo-section green">Response</span>
+  <span class="algo-indent">transcript &nbsp;— full text string</span>
+  <span class="algo-indent">words &nbsp;— list of: word text · start time · end time · confidence score (0–1)</span>
+  <span class="algo-indent">language &nbsp;— detected dominant language code (e.g. "hi", "te", "en")</span>
+</div>
+
+<div class="demo-box">
+  <div class="demo-title">Concurrency model — animated request pipeline</div>
+  <p style="font-size:13px;color:var(--muted);margin-bottom:14px">Click a strategy to see how requests are dispatched and when results become available. Each row = one request. Blue = in-flight, green = complete.</p>
+  <div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap">
+    <button onclick="runConcDemo('sync')" style="padding:5px 14px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;background:var(--accent);color:#fff;border:none" id="cd-sync">Synchronous (infer)</button>
+    <button onclick="runConcDemo('future')" style="padding:5px 14px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;background:var(--surface2);color:var(--text2);border:1px solid var(--border)" id="cd-future">Thread pool (infer_future)</button>
+    <button onclick="runConcDemo('async')" style="padding:5px 14px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;background:var(--surface2);color:var(--text2);border:1px solid var(--border)" id="cd-async">Asyncio (infer_async)</button>
+  </div>
+  <div id="concTimeline" style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px"></div>
+  <div style="font-size:13px;color:var(--text2);padding:10px 14px;background:var(--surface2);border-radius:6px" id="concStatus">Select a strategy to simulate 4 concurrent requests.</div>
+  <div style="display:flex;gap:20px;margin-top:10px;font-size:12px;color:var(--muted);flex-wrap:wrap">
+    <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;background:#2563eb;border-radius:2px;display:inline-block;opacity:.7"></span>In-flight (waiting on server)</span>
+    <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;background:#059669;border-radius:2px;display:inline-block"></span>Complete</span>
+    <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;background:#e2e8f0;border-radius:2px;display:inline-block"></span>Waiting (blocked)</span>
+  </div>
+</div>
+
+<h3>Typical server latency vs. concurrency</h3>
+<p>The server's dynamic batcher absorbs burst traffic: requests arriving within the same 20 ms window are grouped into a single shared GPU pass. Sending 4–8 requests in parallel will often yield the same or better per-request latency as sequential calls — the server batches them at no extra cost. Beyond 16 concurrent requests the queue starts growing and worst-case latency rises.</p>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Pattern</th><th>Throughput</th><th>P50 latency</th><th>When to use</th></tr></thead>
+    <tbody>
+      <tr><td><code>infer()</code> sequential loop</td><td class="num warn">~14 req/s</td><td class="num warn">72 ms/req</td><td class="dim">Scripts, single-use tools</td></tr>
+      <tr><td><code>infer_future()</code> × 8 workers</td><td class="num good">~48 req/s</td><td class="num" style="color:var(--accent)">~80 ms/req</td><td class="dim">Synchronous server code, batch jobs</td></tr>
+      <tr><td><code>infer_async()</code> × 50 coroutines</td><td class="num good">~45 req/s</td><td class="num good">~75 ms/req</td><td class="dim">FastAPI / asyncio services</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>Threading behaviour while waiting for the server</h3>
+<p>The network layer releases the application's threading lock while waiting for the server response. This means a background thread dispatched via the thread pool does not block the rest of the application during the server round-trip — only during the brief audio pre-processing (~0.5 ms) and result parsing (~0.2 ms). The async path behaves the same way — other tasks run freely while this one is waiting for its response.</p>
+
+<div class="algo">
+  <div class="algo-title">Usage patterns — choosing the right calling style</div>
+
+  <span class="algo-section blue">Pattern 1 &nbsp;— Sequential &nbsp;(~14 requests / second)</span>
+  <span class="algo-indent">For each audio clip in your list:</span>
+  <span class="algo-indent">&nbsp;&nbsp;&nbsp;&nbsp;Send request → wait for result → process it → then move to the next</span>
+  <span class="algo-note">Best for: scripts, notebooks, simple one-off tasks. Easy to reason about but does not use available concurrency.</span>
+  <br>
+  <span class="algo-section purple">Pattern 2 &nbsp;— Thread Pool &nbsp;(~48 requests / second with 8 workers)</span>
+  <span class="algo-indent">Dispatch all requests to the worker pool at once</span>
+  <span class="algo-indent">The server may coalesce several into a single forward pass</span>
+  <span class="algo-indent">Collect results as they complete</span>
+  <span class="algo-note">Best for: batch jobs, synchronous server code. Up to 16 requests can be in-flight simultaneously.</span>
+  <br>
+  <span class="algo-section green">Pattern 3 &nbsp;— Async / Await &nbsp;(~45 requests / second)</span>
+  <span class="algo-indent">Launch all requests as concurrent coroutines</span>
+  <span class="algo-indent">While awaiting responses, the event loop is free to handle other work</span>
+  <span class="algo-indent">All results collected once the last one completes</span>
+  <span class="algo-note">Best for: async web servers (FastAPI, aiohttp). No threads created — scales to hundreds of concurrent requests.</span>
+  <br>
+  <span class="algo-section grey">Adding a timeout (thread pool pattern)</span>
+  <span class="algo-indent">Dispatch request → if no response within N seconds → raise a timeout error</span>
+  <span class="algo-indent">Catch the error and return a graceful fallback response instead</span>
+  <span class="algo-note">Prevents a slow or unreachable server from hanging your application indefinitely.</span>
+</div>
+
+<div class="callout amber"><strong>Concurrency limit:</strong> The worker pool supports up to 16 simultaneous in-flight requests. If you dispatch more than 16 at once, the extras wait in the local queue — not on the server. For best throughput, keep concurrency at or below 16, aligned with the server's own batch capacity.</div>
+</section><hr/>
+
+<section>
+<div class="section-header"><span class="section-num">—</span><h2>Putting It All Together</h2></div>
+<p>Each technique addresses a different failure mode. GPU compilation and dynamic batching give the fast decoder a 170× real-time factor. Batching strict-mode language-constrained requests together cut their latency by 47–49%. Overlapping CPU feature work with GPU decoding cut the full pipeline by 41%. Blank-token penalty and language filtering keep accuracy high at utterance boundaries. Keyword boosting recovers domain-specific vocabulary recall without any model retraining.</p>
+<p>The unifying design principle is <strong>composability</strong>: every feature is independently togglable per request with sane defaults. A caller that needs none pays zero cost. A caller that needs all gets the full stack in a single API call with no model reload.</p>
+<p>The path from 124 ms unoptimized to 72 ms fully-optimized balanced decoder — while simultaneously scaling maximum throughput 5× and halving stress latency — demonstrates that the highest-impact gains are rarely inside the model. They are in the scheduling, batching, and CPU/GPU overlap strategy wrapped around it.</p>
+</section>
+
+</main>
+<footer><p>ASR Inference Optimization · Multilingual Speech Recognition · Production Deep Dive</p></footer>
+
+<script>
+/* ── WAVE ANIMATION ── */
+(function(){
+  const canvas=document.getElementById('waveCanvas');
+  const ctx=canvas.getContext('2d');
+  let t=0,W,H;
+  function resize(){W=canvas.width=canvas.offsetWidth;H=canvas.height=canvas.offsetHeight}
+  resize();window.addEventListener('resize',resize);
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    const waves=[{A:.12,f:.008,s:.03,a:.6},{A:.07,f:.015,s:.05,a:.4},{A:.04,f:.025,s:.08,a:.25}];
+    waves.forEach(w=>{
+      ctx.beginPath();
+      for(let x=0;x<=W;x++){
+        const y=H/2+H*w.A*Math.sin(x*w.f+t*w.s)+H*.04*Math.sin(x*.03+t*.02);
+        x===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+      }
+      ctx.strokeStyle=`rgba(96,165,250,${w.a})`;ctx.lineWidth=1.5;ctx.stroke();
+    });
+    t+=1;requestAnimationFrame(draw);
+  }
+  draw();
+})();
+
+/* ── SCROLL REVEAL ── */
+(()=>{
+  const io=new IntersectionObserver(entries=>entries.forEach(e=>{if(e.isIntersecting)e.target.classList.add('visible')}),{threshold:.1});
+  document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
+})();
+
+/* ── PIPELINE ANIMATION ── */
+(()=>{
+  const nodes=[...document.querySelectorAll('#pipeline .pipe-node')];
+  let ci=0;
+  function step(){nodes[ci].classList.remove('active');ci=(ci+1)%nodes.length;nodes[ci].classList.add('active')}
+  nodes[0].classList.add('active');setInterval(step,1200);
+})();
+
+/* ── BLANK PENALTY DEMO ── */
+const BASE_MID={
+  'blank':-0.4,'▁है':-1.8,'▁का':-2.1,'▁को':-2.5,'▁में':-2.7,'▁se':-3.0
+};
+const BASE_TAIL={
+  'blank':-0.2,'▁है':-3.1,'▁na':-3.4,'▁ha':-3.6,'▁रहा':-3.9,'▁था':-4.2
+};
+let penaltyMode='flat';
+
+function logprobToPercent(lp){return Math.max(0,Math.min(100,(lp+5)/5*100))}
+function barColor(tok){
+  if(tok==='blank')return '#dc2626';
+  const langs={'▁है':'#2563eb','▁का':'#2563eb','▁को':'#2563eb','▁में':'#2563eb','▁se':'#059669','▁na':'#059669','▁ha':'#059669','▁रहा':'#7c3aed','▁था':'#7c3aed'};
+  return langs[tok]||'#64748b';
+}
+
+function renderLpChart(id,data,penalty,isTail){
+  const el=document.getElementById(id);if(!el)return;
+  el.innerHTML='';
+  const penApplies=penaltyMode==='flat'||(penaltyMode==='tail'&&isTail)||(penaltyMode==='conf'&&data['blank']>-0.5);
+  Object.entries(data).forEach(([tok,lp])=>{
+    const adjusted=tok==='blank'&&penApplies?lp-penalty:lp;
+    const pct=logprobToPercent(adjusted);
+    const row=document.createElement('div');row.className='lp-row';
+    row.innerHTML=`<span class="lp-label">${tok}</span>
+      <div class="lp-bar-wrap"><div class="lp-bar" style="width:${pct}%;background:${barColor(tok)}">${pct>15?tok:''}</div></div>
+      <span class="lp-val">${adjusted.toFixed(1)}</span>`;
+    el.appendChild(row);
+  });
+}
+
+function updatePenalty(v){
+  document.getElementById('penaltyVal').textContent=parseFloat(v).toFixed(1);
+  renderLpChart('lpChartMid',BASE_MID,+v,false);
+  renderLpChart('lpChartTail',BASE_TAIL,+v,true);
+  const p=+v;
+  const descs={flat:`Flat penalty ${p}: blank score reduced by ${p} at every audio frame. Notice the blank bar shrink on both sides.`,
+    conf:`Confidence-gated penalty ${p}: only fires where blank is already strongly dominant over word tokens. Leaves clean frames untouched.`,
+    tail:`Tail penalty ${p}: only applied to the last N frames (user mic region). Frame 42 (mid-utterance) is completely unchanged.`};
+  document.getElementById('penaltyExplain').textContent=descs[penaltyMode].replace('${p}',p);
+}
+
+function setPenaltyMode(m){
+  penaltyMode=m;
+  ['flat','conf','tail'].forEach(x=>{
+    const b=document.getElementById('btn-'+x);
+    b.style.background=x===m?'var(--accent)':'var(--surface2)';
+    b.style.color=x===m?'#fff':'var(--text2)';
+    b.style.border=x===m?'none':'1px solid var(--border)';
+  });
+  const descs={flat:'Applied to blank at every frame',conf:'Only applied where blank is highly dominant',tail:'Only applied to last 4 encoder frames (tail)'};
+  document.getElementById('penaltyModeDesc').textContent=descs[m];
+  updatePenalty(document.getElementById('penaltySlider').value);
+}
+
+renderLpChart('lpChartMid',BASE_MID,0,false);
+renderLpChart('lpChartTail',BASE_TAIL,0,true);
+
+/* ── LANGUAGE MASK DEMO ── */
+const VOCAB_SAMPLE=[
+  {t:'▁मैं',l:'hi'},{t:'▁है',l:'hi'},{t:'▁का',l:'hi'},{t:'▁को',l:'hi'},{t:'▁में',l:'hi'},{t:'▁और',l:'hi'},{t:'▁नहीं',l:'hi'},{t:'▁कर',l:'hi'},
+  {t:'▁the',l:'en'},{t:'▁and',l:'en'},{t:'▁is',l:'en'},{t:'▁for',l:'en'},{t:'▁are',l:'en'},{t:'▁with',l:'en'},{t:'▁this',l:'en'},{t:'▁that',l:'en'},
+  {t:'▁నేను',l:'te'},{t:'▁అవును',l:'te'},{t:'▁ఉంది',l:'te'},{t:'▁కాదు',l:'te'},{t:'▁చేస్తా',l:'te'},{t:'▁వస్తా',l:'te'},
+  {t:'▁मला',l:'mr'},{t:'▁आहे',l:'mr'},{t:'▁नाही',l:'mr'},{t:'▁करतो',l:'mr'},
+  {t:'▁ನಾನು',l:'kn'},{t:'▁ಇದೆ',l:'kn'},{t:'▁ಇಲ್ಲ',l:'kn'},
+  {t:'▁நான்',l:'ta'},{t:'▁இல்லை',l:'ta'},{t:'▁வருகிறேன்',l:'ta'},
+  {t:'▁আমি',l:'bn'},{t:'▁আছে',l:'bn'},{t:'▁নেই',l:'bn'},
+  {t:'▁ഞാൻ',l:'ml'},{t:'▁ആണ്',l:'ml'},{t:'▁ഉണ്ട്',l:'ml'},
+  {t:'▁હું',l:'gu'},{t:'▁છે',l:'gu'},{t:'▁નથી',l:'gu'},
+  {t:'<blank>',l:'all'},{t:'▁',l:'all'},{t:'.',l:'all'},{t:',',l:'all'},
+];
+const LANG_COLORS={hi:'#2563eb',en:'#059669',te:'#7c3aed',mr:'#d97706',kn:'#0891b2',ta:'#be185d',bn:'#65a30d',ml:'#c2410c',gu:'#4f46e5',all:'#64748b'};
+const LANG_LABELS={hi:'Hindi',en:'English',te:'Telugu',mr:'Marathi',kn:'Kannada',ta:'Tamil',bn:'Bengali',ml:'Malayalam',gu:'Gujarati'};
+let activeLangs=new Set(['hi','en','te','mr','kn','ta','bn','ml','gu','all']);
+
+function renderVocab(){
+  const grid=document.getElementById('vocabGrid');
+  if(!grid)return;
+  grid.innerHTML='';
+  let active=0,total=VOCAB_SAMPLE.length;
+  VOCAB_SAMPLE.forEach(({t,l})=>{
+    const allowed=l==='all'||activeLangs.has(l);
+    if(allowed)active++;
+    const span=document.createElement('span');
+    span.className='vocab-token';
+    span.textContent=t;
+    span.style.background=allowed?(LANG_COLORS[l]+'22'):'#f1f5f9';
+    span.style.borderColor=allowed?LANG_COLORS[l]:'#e2e8f0';
+    span.style.color=allowed?LANG_COLORS[l]:'#94a3b8';
+    span.style.opacity=allowed?'1':'0.4';
+    span.title=`${LANG_LABELS[l]||'shared'} token${allowed?'':(` — masked (−∞)`)}`;
+    grid.appendChild(span);
+  });
+  document.getElementById('maskStats').textContent=`${active} of ${total} tokens active (${total-active} masked with −∞)`;
+  document.getElementById('maskExplain').innerHTML=activeLangs.size<9?
+    `<strong>${[...activeLangs].filter(l=>l!=='all').map(l=>LANG_LABELS[l]).join(', ')}</strong> tokens + shared tokens are permitted. ${total-active} tokens are fully blocked and cannot appear in the output. The language mask is applied in a single fast operation before each decode step.`:
+    `Full vocabulary active — all tokens can appear. Select specific languages above to see the mask applied.`;
+}
+
+function buildLangButtons(){
+  const wrap=document.getElementById('langButtons');
+  if(!wrap)return;
+  Object.entries(LANG_LABELS).forEach(([code,name])=>{
+    const btn=document.createElement('button');
+    btn.id='lb-'+code;btn.textContent=name;
+    btn.style.cssText=`padding:4px 12px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;transition:all .2s;background:${LANG_COLORS[code]};color:#fff;border:none`;
+    btn.onclick=()=>{
+      if(activeLangs.has(code)){if(activeLangs.size>2){activeLangs.delete(code);btn.style.opacity='0.35'}}
+      else{activeLangs.add(code);btn.style.opacity='1'}
+      renderVocab();
+    };
+    wrap.appendChild(btn);
+  });
+}
+buildLangButtons();renderVocab();
+
+/* ── CHUNK CANVAS ── */
+function drawChunks(phase){
+  const canvas=document.getElementById('chunkCanvas');if(!canvas)return;
+  const ctx=canvas.getContext('2d');
+  const W=canvas.width=canvas.offsetWidth*2;const H=canvas.height=240;canvas.style.height='120px';
+  ctx.scale(2,2);const w=W/2,h=H/2;
+  ctx.fillStyle='#f8fafc';ctx.fillRect(0,0,w,h);
+
+  // Generate fake waveform
+  const pts=600;
+  const segments=[
+    {start:0,end:.12,type:'silence'},{start:.12,end:.35,type:'speech'},{start:.35,end:.42,type:'silence'},
+    {start:.42,end:.62,type:'speech'},{start:.62,end:.68,type:'silence'},{start:.68,end:.88,type:'speech'},
+    {start:.88,end:.92,type:'silence'},{start:.92,end:1,type:'speech'}
+  ];
+  const chunkDefs=[
+    {start:0,end:.45,color:'#2563eb',overlap:[.38,.45],phase:1},
+    {start:.38,end:.75,color:'#7c3aed',overlap:[.65,.75],phase:2},
+    {start:.65,end:1,color:'#059669',overlap:null,phase:3}
+  ];
+
+  // Draw waveform
+  const wave=[];
+  for(let i=0;i<pts;i++){
+    const x=i/pts;
+    const seg=segments.find(s=>x>=s.start&&x<s.end)||{type:'silence'};
+    let amp=seg.type==='speech'?
+      (0.25*Math.sin(x*400)+0.15*Math.sin(x*700+1)+0.1*Math.sin(x*250+2)+0.08*(Math.random()-.5)):
+      (0.02*(Math.random()-.5));
+    wave.push(amp);
+  }
+
+  // Draw chunk backgrounds if phase > 0
+  if(phase>0){
+    chunkDefs.slice(0,phase).forEach(cd=>{
+      // overlap region
+      if(cd.overlap){
+        ctx.fillStyle='rgba(217,119,6,.18)';
+        ctx.fillRect(cd.overlap[0]*w,0,(cd.overlap[1]-cd.overlap[0])*w,h);
+      }
+      // chunk fill
+      ctx.fillStyle=cd.color+'18';
+      ctx.fillRect(cd.start*w,0,(cd.end-cd.start)*w,h);
+    });
+  }
+
+  // Draw waveform line
+  ctx.beginPath();
+  for(let i=0;i<pts;i++){
+    const x=(i/pts)*w;const y=h/2+wave[i]*h*.85;
+    const seg=segments.find(s=>i/pts>=s.start&&i/pts<s.end)||{type:'silence'};
+    ctx.strokeStyle=seg.type==='silence'?'#cbd5e1':'#0f172a';
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  }
+  ctx.lineWidth=.8;ctx.stroke();
+
+  // Draw split lines and labels
+  if(phase>0){
+    const splits=[.45,.75];
+    splits.slice(0,phase).forEach((s,i)=>{
+      ctx.beginPath();ctx.moveTo(s*w,0);ctx.lineTo(s*w,h);
+      ctx.strokeStyle='#dc2626';ctx.lineWidth=1.5;ctx.setLineDash([4,3]);ctx.stroke();ctx.setLineDash([]);
+      ctx.fillStyle='#dc2626';ctx.font='bold 9px system-ui';
+      ctx.fillText(`split ${i+1}`,s*w+3,12);
+    });
+    // chunk labels
+    chunkDefs.slice(0,phase).forEach((cd,i)=>{
+      ctx.fillStyle=cd.color+'cc';ctx.font='bold 10px system-ui';
+      ctx.fillText(`Chunk ${i+1}`,cd.start*w+5,h-8);
+    });
+  }
+
+  // Silence regions
+  segments.filter(s=>s.type==='silence').forEach(s=>{
+    ctx.fillStyle='rgba(148,163,184,.12)';
+    ctx.fillRect(s.start*w,0,(s.end-s.start)*w,h);
+  });
+
+  // Time axis
+  ctx.fillStyle='#94a3b8';ctx.font='10px system-ui';
+  for(let i=0;i<=10;i++){
+    ctx.fillText(`${(i*3).toFixed(0)}s`,i*.1*w,h-2);
+  }
+}
+
+drawChunks(0);
+let chunkPhase=0;
+function animateChunks(){
+  chunkPhase=0;
+  function step(){chunkPhase++;drawChunks(chunkPhase);if(chunkPhase<3)setTimeout(step,900)}
+  step();
+}
+window.addEventListener('resize',()=>drawChunks(chunkPhase));
+
+/* ── KEYWORD BOOSTING ANIMATION ── */
+const KW_DATA={
+  akshara:{tokens:['▁ak','sh','ara'],baseProbs:[.18,.55,.72,.68,.81,.87]},
+  'नमस्ते':{tokens:['▁न','मस्','ते'],baseProbs:[.22,.48,.65,.71,.79,.85]},
+  doctor:{tokens:['▁doc','tor'],baseProbs:[.15,.52,.68,.74,.82,.88]}
+};
+let kwAnimStep=-1,kwTimer=null,kwCurrent='akshara';
+
+function changeKw(v){kwCurrent=v;document.getElementById('kwDisplay').textContent=`"${v}"`;resetKwAnim()}
+
+function drawTree(step){
+  const canvas=document.getElementById('treeCanvas');if(!canvas)return;
+  const ctx=canvas.getContext('2d');
+  const W=canvas.width=canvas.offsetWidth*2;const H=440;canvas.height=H;canvas.style.height='220px';
+  ctx.scale(2,2);const w=W/2,h=H/2;
+  ctx.fillStyle='#f8fafc';ctx.fillRect(0,0,w,h);
+
+  const kd=KW_DATA[kwCurrent];
+  const toks=['<root>',...kd.tokens,'✓'];
+  const n=toks.length;
+  const spacing=w/(n+1);
+  const y=h/2;
+
+  // edges
+  for(let i=0;i<toks.length-1;i++){
+    const x1=(i+1)*spacing,x2=(i+2)*spacing;
+    const active=step>=i;
+    ctx.beginPath();ctx.moveTo(x1,y);ctx.lineTo(x2,y);
+    ctx.strokeStyle=active?'#2563eb':'#cbd5e1';ctx.lineWidth=active?2.5:1.5;ctx.stroke();
+    if(active&&i<toks.length-2){
+      // boost arrow annotation
+      ctx.fillStyle='#d97706';ctx.font='bold 9px system-ui';
+      const boost=(kd.baseProbs[i+1]*3).toFixed(1);
+      ctx.fillText(`+${boost}`,x1+(x2-x1)/2-8,y-14);
+    }
+  }
+
+  // nodes
+  toks.forEach((tok,i)=>{
+    const x=(i+1)*spacing;
+    const active=step>=i-1;
+    const completed=i===toks.length-1&&step>=toks.length-2;
+    const r=20;
+    ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);
+    ctx.fillStyle=completed?'#059669':active?'#2563eb':'#f1f5f9';
+    ctx.fill();
+    ctx.strokeStyle=completed?'#059669':active?'#1d4ed8':'#cbd5e1';ctx.lineWidth=2;ctx.stroke();
+    ctx.fillStyle=active?'#fff':'#64748b';
+    ctx.font=`bold ${tok.length>4?8:10}px 'JetBrains Mono',monospace`;
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(tok,x,y);
+    if(i>0&&step>=i-1){
+      const lp=kd.baseProbs[i-1];
+      ctx.fillStyle='#94a3b8';ctx.font='9px system-ui';ctx.textAlign='center';
+      ctx.fillText(`p=${lp.toFixed(2)}`,x,y+r+12);
+    }
+  });
+  ctx.textAlign='left';ctx.textBaseline='alphabetic';
+
+  if(step>=toks.length-2){
+    ctx.fillStyle='#059669';ctx.font='bold 12px system-ui';
+    ctx.textAlign='center';
+    ctx.fillText(`Keyword "${kwCurrent}" DETECTED ✓`,w/2,h-14);
+    ctx.textAlign='left';
+  }
+}
+
+function renderKwLpChart(step){
+  const el=document.getElementById('kwLpChart');if(!el)return;
+  el.innerHTML='';
+  const kd=KW_DATA[kwCurrent];
+  const frameTokens=['▁'+kwCurrent[0],'<blank>','▁other','▁word'];
+  const baseLP=[-1.8,-0.3,-2.1,-2.5];
+  const boost=step>=0&&step<kd.tokens.length?kd.baseProbs[step]*2.5:0;
+  frameTokens.forEach((tok,i)=>{
+    const boosted=i===0&&step>=0?baseLP[i]+boost:baseLP[i];
+    const pct=logprobToPercent(boosted);
+    const colors=['#2563eb','#dc2626','#64748b','#7c3aed'];
+    const row=document.createElement('div');row.className='lp-row';
+    row.innerHTML=`<span class="lp-label" style="width:90px">${tok}</span>
+      <div class="lp-bar-wrap"><div class="lp-bar" style="width:${pct}%;background:${colors[i]}">${pct>12?tok:''}</div></div>
+      <span class="lp-val">${boosted.toFixed(2)}</span>`;
+    el.appendChild(row);
+  });
+}
+
+function startKwAnim(){
+  if(kwTimer)clearInterval(kwTimer);
+  kwAnimStep=-1;
+  const kd=KW_DATA[kwCurrent];
+  const total=kd.tokens.length+2;
+  kwTimer=setInterval(()=>{
+    kwAnimStep++;
+    drawTree(kwAnimStep);
+    renderKwLpChart(kwAnimStep-1);
+    const statuses=['Entering root node...','Matching first token...','Matching second token...','Matching third token...','Keyword path complete!','Keyword accepted — merging into transcript'];
+    document.getElementById('kwStatus').textContent=statuses[Math.min(kwAnimStep,statuses.length-1)];
+    if(kwAnimStep>=total){clearInterval(kwTimer);kwTimer=null}
+  },700);
+}
+function resetKwAnim(){
+  if(kwTimer)clearInterval(kwTimer);kwTimer=null;kwAnimStep=-1;
+  drawTree(-1);renderKwLpChart(-1);
+  document.getElementById('kwStatus').textContent='Press Animate to start step-by-step prefix tree traversal.';
+}
+drawTree(-1);renderKwLpChart(-1);
+
+/* ── WORD BOOST VIZ ── */
+const WB_WORDS=[
+  {text:'मुझे',lang:'hi',color:'#2563eb'},{text:'hospital',lang:'en',color:'#059669'},{text:'जाना',lang:'hi',color:'#2563eb'},{text:'है',lang:'hi',color:'#2563eb'}
+];
+function updateWordBoost(){
+  const lb=+document.getElementById('lbSlider').value;
+  const lp=+document.getElementById('lpSlider').value;
+  document.getElementById('lbVal').textContent=lb.toFixed(1);
+  document.getElementById('lpVal').textContent=lp.toFixed(1);
+  const wrap=document.getElementById('wordBoostViz');
+  wrap.innerHTML='';
+  WB_WORDS.forEach(w=>{
+    const div=document.createElement('div');
+    div.style.cssText=`background:${w.color}18;border:2px solid ${w.color}55;border-radius:10px;padding:12px 16px;text-align:center;min-width:80px;transition:all .3s`;
+    const boost=lb>0||lp>0?` (+${lb.toFixed(1)})`:' (no boost)';
+    div.innerHTML=`<div style="font-size:15px;font-weight:700;color:${w.color}">${w.text}</div>
+      <div style="font-size:11px;color:#94a3b8;margin-top:3px">${w.lang.toUpperCase()}</div>
+      <div style="font-size:11px;font-weight:700;color:${lb>0?w.color:'#94a3b8'};margin-top:4px">${boost}</div>`;
+    if(lb>0||lp>0){div.style.borderColor=w.color;div.style.background=w.color+'28'}
+    wrap.appendChild(div);
+  });
+  const ex=document.getElementById('wbExplain');
+  if(lb===0&&lp===0){ex.textContent='No boosting active — all tokens equally weighted.';return}
+  let msg=`lang_boost=${lb}: dominant-language token log-probs +${lb}. `;
+  if(lp>0)msg+=`lang_penalty=${lp}: competing-language tokens −${lp}. `;
+  msg+=`"hospital" (EN) gets +${lb.toFixed(1)} in its frame span; Hindi tokens get −${lp.toFixed(1)} there. Push-pull effect.`;
+  ex.textContent=msg;
+}
+updateWordBoost();
+
+/* ── FRAME PRUNING DEMO ── */
+let frameData=[];let framePruned=false;
+function genFrames(){
+  frameData=[];
+  const pattern=[.95,.92,.88,.15,.12,.18,.94,.91,.13,.11,.17,.96,.93,.90,.14,.12,.18,.95,.92,.88,.15,.14,.97,.94,.91,.13,.11,.16,.95,.92,.18,.94,.91,.14,.12,.17,.96,.93,.15,.13,.16,.95,.92,.88,.94,.91,.13,.11,.17,.96,.93,.15,.13,.16,.95,.92,.88,.14,.13,.17];
+  for(let i=0;i<60;i++)frameData.push({bp:pattern[i]||Math.random()*.2+.08,original:i,kept:true});
+}
+genFrames();
+
+function drawFrameStrip(){
+  const strip=document.getElementById('frameStrip');if(!strip)return;
+  const thresh=+document.getElementById('blankThreshSlider').value;
+  strip.innerHTML='';
+  let keptCount=0;
+  frameData.forEach((f,i)=>{
+    const isHigh=f.bp>thresh;
+    const bar=document.createElement('div');
+    bar.className='frame-bar';
+    const h=Math.round(f.bp*72);
+    bar.style.cssText=`height:${h}px;background:${!f.kept?'#e2e8f0':isHigh?'#dc262655':'#2563eb'};border:${isHigh&&f.kept?'2px solid #dc2626':'1px solid transparent'};border-radius:3px 3px 0 0;width:${framePruned&&!f.kept?'0px':'18px'};transition:all .4s ease;opacity:${framePruned&&!f.kept?'0':'1'}`;
+    bar.innerHTML=`<div class="frame-tip">Frame ${f.original}<br/>blank_p=${f.bp.toFixed(2)}<br/>${isHigh?'→ PRUNED':'→ KEPT'}</div>`;
+    if(f.kept)keptCount++;
+    strip.appendChild(bar);
+  });
+  const thresh2=+document.getElementById('blankThreshSlider').value;
+  const prunable=frameData.filter(f=>f.bp>thresh2&&f.kept).length;
+  document.getElementById('pruneStatus').textContent=framePruned?
+    `Pruned. ${keptCount} frames retained from original 60 (${Math.round((1-keptCount/60)*100)}% removed). Frame-map preserves original indices for timestamp recovery.`:
+    `${prunable} of 60 frames are blank-dominated (p > ${thresh2.toFixed(2)}) and will be removed. Red bars = pruning candidates.`;
+}
+drawFrameStrip();
+
+function updateFrameThresh(v){
+  document.getElementById('blankThreshVal').textContent=parseFloat(v).toFixed(2);
+  framePruned=false;drawFrameStrip();
+}
+
+function pruneFrames(){
+  const thresh=+document.getElementById('blankThreshSlider').value;
+  frameData.forEach(f=>{f.kept=!(f.bp>thresh)});
+  // always keep first and last
+  frameData[0].kept=true;frameData[frameData.length-1].kept=true;
+  framePruned=true;drawFrameStrip();
+}
+function resetFrames(){
+  frameData.forEach(f=>f.kept=true);framePruned=false;drawFrameStrip();
+}
+
+/* ── TIMESTAMP CANVAS ── */
+(()=>{
+  const canvas=document.getElementById('timestampCanvas');if(!canvas)return;
+  const words=[
+    {w:'मुझे',s:.04,e:.28,score:.92},{w:'hospital',s:.32,e:.65,score:.85},{w:'जाना',s:.69,e:.88,score:.71},
+    {w:'है',s:.91,e:1.02,score:.55},{w:'<sil>',s:1.06,e:1.22,score:null},{w:'कल',s:1.25,e:1.48,score:.88},
+    {w:'सुबह',s:1.51,e:1.82,score:.79},{w:'doctor',s:1.85,e:2.18,score:.91}
+  ];
+  function draw(){
+    const W=canvas.width=canvas.offsetWidth*2;const H=240;canvas.height=H;canvas.style.height='120px';
+    const ctx=canvas.getContext('2d');ctx.scale(2,2);const w=W/2,h=H/2;
+    ctx.fillStyle='#f8fafc';ctx.fillRect(0,0,w,h);
+    const scale=w/2.5;const margin=24;const barH=36;const barY=(h-barH)/2;
+    // time axis
+    ctx.strokeStyle='#e2e8f0';ctx.lineWidth=1;
+    for(let t=0;t<=2.5;t+=.25){
+      ctx.beginPath();ctx.moveTo(margin+t*scale,barY-8);ctx.lineTo(margin+t*scale,barY+barH+8);ctx.stroke();
+      ctx.fillStyle='#94a3b8';ctx.font='9px system-ui';ctx.textAlign='center';
+      ctx.fillText(`${t.toFixed(2)}s`,margin+t*scale,h-4);
+    }
+    words.forEach(({w:word,s,e,score})=>{
+      if(!score){return}
+      const x=margin+s*scale;const bw=(e-s)*scale;
+      const col=score>.85?'#059669':score>.7?'#d97706':'#dc2626';
+      ctx.fillStyle=col+'30';ctx.beginPath();ctx.roundRect(x,barY,bw,barH,4);ctx.fill();
+      ctx.strokeStyle=col;ctx.lineWidth=1.5;ctx.stroke();
+      ctx.fillStyle=col;ctx.font=`bold ${word.length>6?8:10}px system-ui`;ctx.textAlign='center';
+      ctx.fillText(word,x+bw/2,barY+barH/2+4);
+      ctx.font='8px system-ui';ctx.fillStyle='#64748b';
+      ctx.fillText(score.toFixed(2),x+bw/2,barY+barH+16);
+    });
+    ctx.textAlign='left';
+  }
+  draw();window.addEventListener('resize',draw);
+})();
+
+/* ── BENCHMARK CHARTS ── */
+const BENCH_DATA={
+  ctc:[
+    {label:'Baseline',v:59,max:250},{label:'+ Hindi only',v:66,max:250},{label:'+ Telugu only',v:68,max:250},
+    {label:'+ Hindi + English',v:67,max:250},{label:'+ word language boost',v:65,max:250},{label:'+ keyword boost',v:73,max:250},
+    {label:'+ word timestamps',v:61,max:250},{label:'Full feature pipeline',v:78,max:250}
+  ],
+  tdt:[
+    {label:'Baseline',v:72,max:250},{label:'+ Hindi (strict)',v:92,max:250},{label:'+ Telugu (strict)',v:96,max:250},
+    {label:'+ Hindi + English (strict)',v:77,max:250},{label:'+ word language boost',v:73,max:250},{label:'+ keyword boost',v:73,max:250},
+    {label:'+ word timestamps',v:73,max:250},{label:'Full feature pipeline',v:89,max:250}
+  ],
+  rnnt:[
+    {label:'Baseline',v:179,max:250},{label:'+ Hindi (strict)',v:210,max:250},{label:'+ Telugu only',v:247,max:250},
+    {label:'+ Hindi + English',v:200,max:250},{label:'+ word language boost',v:190,max:250},{label:'+ keyword boost',v:196,max:250},
+    {label:'+ word timestamps',v:181,max:250},{label:'Full feature pipeline',v:210,max:250}
+  ]
+};
+const BENCH_COLORS={ctc:'#059669',tdt:'#2563eb',rnnt:'#d97706'};
+let currentBench='ctc';
+
+function showBench(strat){
+  currentBench=strat;
+  Object.keys(BENCH_DATA).forEach(s=>{
+    const b=document.getElementById('bsb-'+s);
+    b.style.background=s===strat?BENCH_COLORS[s]:'var(--surface2)';
+    b.style.color=s===strat?'#fff':'var(--text2)';
+    b.style.border=s===strat?'none':'1px solid var(--border)';
+  });
+  renderBenchChart();
+}
+
+function renderBenchChart(){
+  const el=document.getElementById('benchChart');if(!el)return;
+  el.innerHTML='';
+  const data=BENCH_DATA[currentBench];const color=BENCH_COLORS[currentBench];
+  data.forEach(({label,v,max})=>{
+    const pct=(v/max*100).toFixed(1);
+    const row=document.createElement('div');row.className='bc-row';
+    row.innerHTML=`<span class="bc-label">${label}</span>
+      <div class="bc-track"><div class="bc-fill" style="width:0%;background:${color}" data-target="${pct}">${v} ms</div></div>
+      <span class="bc-num" style="color:${color}">${v} ms</span>`;
+    el.appendChild(row);
+  });
+  setTimeout(()=>{
+    el.querySelectorAll('.bc-fill').forEach(b=>{b.style.width=b.dataset.target+'%'})
+  },50);
+}
+
+function renderOptChart(){
+  const el=document.getElementById('optChart');if(!el)return;
+  el.innerHTML='';
+  const pairs=[
+    {label:'Hindi strict decode',before:183,after:92},{label:'Telugu strict decode',before:181,after:96},
+    {label:'Full feature pipeline',before:150,after:89},{label:'Balanced decoder (baseline)',before:124,after:72}
+  ];
+  pairs.forEach(({label,before,after})=>{
+    const max=220;
+    const el2=document.createElement('div');el2.style.marginBottom='16px';
+    el2.innerHTML=`<div style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:6px">${label}</div>
+      <div class="bc-row" style="margin-bottom:4px"><span class="bc-label" style="font-size:12px;color:var(--muted)">Baseline (before)</span>
+        <div class="bc-track"><div class="bc-fill" style="width:${(before/max*100)}%;background:#f87171">${before} ms</div></div>
+        <span class="bc-num" style="color:#dc2626">${before} ms</span></div>
+      <div class="bc-row"><span class="bc-label" style="font-size:12px;color:var(--muted)">Optimized (after)</span>
+        <div class="bc-track"><div class="bc-fill" style="width:0%;background:#059669" data-target="${(after/max*100).toFixed(1)}">${after} ms</div></div>
+        <span class="bc-num" style="color:#059669">${after} ms</span></div>`;
+    el.appendChild(el2);
+  });
+  setTimeout(()=>{el.querySelectorAll('.bc-fill[data-target]').forEach(b=>{b.style.width=b.dataset.target+'%'})},50);
+}
+
+/* ── CONCURRENCY DEMO ── */
+const CONC_STRATEGIES={
+  sync:{label:'Synchronous',color:'#64748b',
+    reqs:[{start:0,dur:72,label:'Req 1'},{start:72,dur:68,label:'Req 2'},{start:140,dur:75,label:'Req 3'},{start:215,dur:70,label:'Req 4'}],
+    totalMs:285,desc:'Sequential: each request waits for the previous to complete. Total wall-clock time = sum of all latencies (285 ms for 4 requests). The calling thread is blocked throughout.'},
+  future:{label:'Thread Pool',color:'#2563eb',
+    reqs:[{start:0,dur:72,label:'Req 1'},{start:0,dur:78,label:'Req 2'},{start:0,dur:69,label:'Req 3'},{start:0,dur:75,label:'Req 4'}],
+    totalMs:78,desc:'Thread pool (parallel × 4): all 4 requests dispatched immediately. The server may batch them into a single forward pass. Total wall-clock time ≈ the slowest individual request. Background threads release the application lock while waiting.'},
+  async:{label:'Asyncio',color:'#059669',
+    reqs:[{start:0,dur:72,label:'Req 1'},{start:2,dur:74,label:'Req 2'},{start:4,dur:70,label:'Req 3'},{start:6,dur:75,label:'Req 4'}],
+    totalMs:81,desc:'Async / await (concurrent × 4): all requests run as concurrent tasks with tiny scheduling offsets. The application handles other work while waiting for responses. No threads created. Ideal for high-concurrency web servers.'},
+};
+let concTimer=null;
+
+function runConcDemo(strat){
+  if(concTimer)clearInterval(concTimer);
+  ['sync','future','async'].forEach(s=>{
+    const b=document.getElementById('cd-'+s);
+    b.style.background=s===strat?CONC_STRATEGIES[s].color:'var(--surface2)';
+    b.style.color=s===strat?'#fff':'var(--text2)';
+    b.style.border=s===strat?'none':'1px solid var(--border)';
+  });
+  const sd=CONC_STRATEGIES[strat];
+  const timeline=document.getElementById('concTimeline');
+  timeline.innerHTML='';
+  const maxMs=Math.max(...sd.reqs.map(r=>r.start+r.dur));
+  const rows=[];
+  sd.reqs.forEach((req,i)=>{
+    const row=document.createElement('div');
+    row.style.cssText='display:flex;align-items:center;gap:10px;height:28px';
+    const lbl=document.createElement('div');
+    lbl.style.cssText='width:50px;font-size:12px;font-weight:700;color:var(--text2);flex-shrink:0;text-align:right';
+    lbl.textContent=req.label;
+    const track=document.createElement('div');
+    track.style.cssText='flex:1;background:#e2e8f0;border-radius:4px;height:24px;position:relative;overflow:hidden';
+    // waiting bar
+    if(req.start>0){
+      const waitBar=document.createElement('div');
+      waitBar.style.cssText=`position:absolute;left:0;top:0;height:100%;width:${(req.start/maxMs*100).toFixed(1)}%;background:#e2e8f0;border-right:2px dashed #94a3b8`;
+      track.appendChild(waitBar);
+    }
+    // inflight bar (starts hidden)
+    const bar=document.createElement('div');
+    bar.style.cssText=`position:absolute;left:${(req.start/maxMs*100).toFixed(1)}%;top:0;height:100%;width:0%;background:${sd.color}99;border-radius:3px;transition:width 0.8s ease;display:flex;align-items:center;padding-left:6px;font-size:11px;font-weight:700;color:#fff;overflow:hidden;white-space:nowrap`;
+    bar.dataset.target=`${(req.dur/maxMs*100).toFixed(1)}%`;
+    bar.dataset.delay=req.start;
+    bar.textContent=`${req.dur}ms`;
+    track.appendChild(bar);
+    const ms=document.createElement('div');
+    ms.style.cssText='width:48px;font-size:12px;font-weight:700;text-align:right;flex-shrink:0;opacity:0;transition:opacity .3s';
+    ms.style.color=sd.color;ms.textContent=`${req.dur}ms`;
+    ms.dataset.delay=req.start+req.dur;
+    row.appendChild(lbl);row.appendChild(track);row.appendChild(ms);
+    timeline.appendChild(row);
+    rows.push({bar,ms,req});
+  });
+  // total time label
+  const totalRow=document.createElement('div');
+  totalRow.style.cssText='display:flex;justify-content:flex-end;margin-top:4px;font-size:13px;font-weight:700;opacity:0;transition:opacity .4s';
+  totalRow.style.color=sd.color;totalRow.textContent=`Total wall-clock: ${sd.totalMs} ms`;
+  totalRow.dataset.showAt=sd.totalMs;timeline.appendChild(totalRow);
+
+  let elapsed=0;
+  document.getElementById('concStatus').textContent='Running…';
+  concTimer=setInterval(()=>{
+    elapsed+=20;
+    rows.forEach(({bar,ms,req})=>{
+      if(elapsed>=req.start&&elapsed<req.start+req.dur){
+        const progress=Math.min(((elapsed-req.start)/req.dur),1);
+        bar.style.width=`${progress*parseFloat(bar.dataset.target)}%`;
+        bar.style.background=`${sd.color}99`;
+      }
+      if(elapsed>=req.start+req.dur){
+        bar.style.width=bar.dataset.target;
+        bar.style.background=sd.color;
+        ms.style.opacity='1';
+      }
+    });
+    if(elapsed>=sd.totalMs){
+      totalRow.style.opacity='1';
+      document.getElementById('concStatus').textContent=sd.desc;
+      clearInterval(concTimer);concTimer=null;
+    }
+  },20*(maxMs/400));
+}
+
+// Init charts when visible
+const benchObs=new IntersectionObserver(entries=>{
+  entries.forEach(e=>{if(e.isIntersecting){showBench('ctc');renderOptChart();benchObs.disconnect()}})
+},{threshold:.2});
+const s11=document.getElementById('s11');if(s11)benchObs.observe(s11);
+</script>
+</body>
+</html>

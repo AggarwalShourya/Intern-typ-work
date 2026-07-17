@@ -1,0 +1,85 @@
+# ── Build ─────────────────────────────────────────────────────────────────────
+docker build -t optimizedv1 .
+
+
+# ── Run (PyTorch encoder — fast startup, no TRT) ──────────────────────────────
+# Port mapping: host → container
+#   8000 → 9002  (HTTP)
+#   9020 → 9001  (gRPC)
+#   8002 → 9003  (metrics / prometheus)
+#
+# DECODING_STRATEGY options: "ctc", "greedy_batch", "malsd_batch"
+sudo docker run --gpus all -d \
+  -p 8000:9002 \
+  -p 9020:9001 \
+  -p 8002:9003 \
+  -e MODEL_PATH="gs://swiss-knife/Vallabh/albatrossv1-old.nemo" \
+  -e DECODING_STRATEGY="ctc" \
+  --name optimized \
+  optimizedv1
+
+sudo rm /data/trt_cache/encoder_fp16.trt
+
+sudo docker run --rm --gpus all  -d   -p 8000:9002 -p 9020:9001 -p 8002:9003     -v /data/trt_cache:/trt_cache     -e MODEL_PATH="gs://swiss-knife/Vallabh/albatrossv1-old.nemo"     -e USE_TRT_ENCODER="true"     -e DECODING_STRATEGY="ctc"  --name integratedv1   integrated
+
+
+# ── Run (TRT FP16 encoder — first start builds engine, ~10 min extra) ─────────
+# The engine is saved to /models/nemo_hybrid/1/encoder_fp16.trt inside the
+# container.  On all subsequent restarts it is loaded directly — no rebuild.
+#
+# To persist the engine across container recreations, mount a host volume:
+#   -v /data/trt_cache:/models/nemo_hybrid/1
+#
+# Shape tuning (optional — defaults suit most traffic):
+#   TRT_OPT_BATCH   — batch size you expect most often (default 4)
+#   TRT_OPT_FRAMES  — typical audio length in frames at 10 ms shift (default 800 = ~8 s)
+#   TRT_MAX_BATCH   — must match MAX_BATCH_SIZE in model.py (default 32)
+#   TRT_MAX_FRAMES  — longest clip you'll ever send (default 3000 = ~30 s)
+sudo docker run --gpus all -d \
+  -p 8000:9002 \
+  -p 9020:9001 \
+  -p 8002:9003 \
+  -e MODEL_PATH="gs://swiss-knife/Vallabh/albatrossv1-old.nemo" \
+  -e DECODING_STRATEGY="ctc" \
+  -e USE_TRT_ENCODER="true" \
+  --name optimized \
+  optimizedv1
+
+
+# ── Run (TRT + volume-mounted cache so engine survives container recreations) ──
+sudo docker run --gpus all -d \
+  -p 8000:9002 \
+  -p 9020:9001 \
+  -p 8002:9003 \
+  -v /data/trt_cache:/models/nemo_hybrid/1 \
+  -e MODEL_PATH="gs://swiss-knife/Vallabh/albatrossv1-old.nemo" \
+  -e DECODING_STRATEGY="ctc" \
+  -e USE_TRT_ENCODER="true" \
+  --name optimized \
+  optimizedv1
+
+sudo docker run --gpus all -d \
+  -p 8000:8000 \
+  -p 9020:8001 \
+  -p 8002:8002 \
+  -e MODEL_PATH="gs://swiss-knife/amina/conformer_v3.nemo" \
+  -e DECODING_STRATEGY="ctc" \
+  -e USE_TRT_ENCODER="true" \
+  --name fs \
+ fsmn
+
+
+# ── Logs (tail server startup) ────────────────────────────────────────────────
+sudo docker logs -f optimized
+
+
+# ── Wait for ready (check HTTP health) ────────────────────────────────────────
+curl -s http://localhost:8000/v2/health/ready
+
+
+# ── Run benchmark ─────────────────────────────────────────────────────────────
+python grpc_benchmark.py
+
+
+# ── Stop / remove container ───────────────────────────────────────────────────
+sudo docker stop optimized && sudo docker rm optimized

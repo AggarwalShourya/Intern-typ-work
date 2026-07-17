@@ -1,0 +1,293 @@
+Script started on 2026-04-05 06:20:52+00:00 [TERM="xterm-256color" TTY="/dev/pts/0" COLUMNS="111" LINES="35"]
+[?2004h(base) ]0;ubuntu@xtts-t4: ~/Vallabh/combined_implementation[01;32mubuntu@xtts-t4[00m:[01;34m~/Vallabh/combined_implementation[00m$ python latency_testing.py 
+[?2004lConnecting to localhost:9020 ...
+Server OK.
+
+Audio: overall.wav  samples=159744  duration=9.98s
+
+Building context graph for keywords: ['keyword', 'boosting'] ...
+  Context graph: 739 bytes
+
+
+########################################################################
+#  Strategy: ctc
+########################################################################
+[client] Decoding strategy → ctc
+
+[ctc] Sequential  (warmup=3  runs=15  scenarios=17)
+  baseline                   mean=56.6ms  p95=57.5ms  RTF=0.006
+  lang_hi                    mean=60.0ms  p95=61.6ms  RTF=0.006
+  lang_hi_en                 mean=61.3ms  p95=62.6ms  RTF=0.006
+  lang_te                    mean=62.8ms  p95=63.5ms  RTF=0.006
+  lang_te_en                 mean=61.2ms  p95=61.8ms  RTF=0.006
+  blank_penalty_2            mean=59.0ms  p95=60.6ms  RTF=0.006
+  word_boost_default         mean=62.4ms  p95=63.4ms  RTF=0.006
+  word_boost_strong          mean=64.3ms  p95=66.2ms  RTF=0.006
+  word_boost_full            mean=96.6ms  p95=544.4ms  RTF=0.010
+  lang+word_boost            mean=67.2ms  p95=69.5ms  RTF=0.007
+  kw_boost_default           mean=75.1ms  p95=77.5ms  RTF=0.008
+  kw_boost_strong            mean=75.4ms  p95=77.7ms  RTF=0.008
+  kw_boost+lang_te_en        mean=78.7ms  p95=80.9ms  RTF=0.008
+  timestamps                 mean=59.8ms  p95=61.5ms  RTF=0.006
+  timestamps+lang            mean=61.8ms  p95=62.8ms  RTF=0.006
+  timestamps+wb              mean=64.5ms  p95=66.6ms  RTF=0.006
+  full_pipeline              mean=83.6ms  p95=87.0ms  RTF=0.008
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  Sequential — strategy=ctc  (ms except RTF)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Scenario                      mean       std       p50       p95       p99       min       max       RTF
+────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  baseline                      56.6       0.5      56.4      57.5      57.5      55.6      57.5     0.006
+  lang_hi                       60.0       0.8      60.1      61.6      61.6      58.6      61.6     0.006
+  lang_hi_en                    61.3       0.8      61.3      62.6      62.6      60.0      62.6     0.006
+  lang_te                       62.8       0.5      62.9      63.5      63.5      61.9      63.5     0.006
+  lang_te_en                    61.2       0.5      61.0      61.8      61.8      60.6      61.8     0.006
+  blank_penalty_2               59.0       0.9      58.6      60.6      60.6      57.8      60.6     0.006
+  word_boost_default            62.4       0.8      62.3      63.4      63.4      60.9      63.4     0.006
+  word_boost_strong             64.3       1.1      64.0      66.2      66.2      62.6      66.2     0.006
+  word_boost_full               96.6     123.9      64.6     544.4     544.4      62.8     544.4     0.010
+  lang+word_boost               67.2       1.3      67.3      69.5      69.5      64.9      69.5     0.007
+  kw_boost_default              75.1       1.1      74.8      77.5      77.5      73.6      77.5     0.008
+  kw_boost_strong               75.4       1.1      75.2      77.7      77.7      73.8      77.7     0.008
+  kw_boost+lang_te_en           78.7       1.0      78.8      80.9      80.9      77.0      80.9     0.008
+  timestamps                    59.8       0.7      59.9      61.5      61.5      58.7      61.5     0.006
+  timestamps+lang               61.8       0.5      61.7      62.8      62.8      60.9      62.8     0.006
+  timestamps+wb                 64.5       1.2      64.8      66.6      66.6      62.6      66.6     0.006
+  full_pipeline                 83.6       2.6      83.1      87.0      87.0      80.2      87.0     0.008
+────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+[ctc] Concurrent  (baseline  n_total=24  levels=[2, 4, 8])
+  concurrency=2   mean=77.6ms  p95=147.4ms  throughput=25.70 req/s
+  concurrency=4   mean=132.8ms  p95=222.9ms  throughput=30.02 req/s
+  concurrency=8   mean=243.2ms  p95=302.9ms  throughput=32.58 req/s
+
+════════════════════════════════════════════════════════════════════════
+  Concurrent — strategy=ctc  scenario=baseline  n_total=24
+────────────────────────────────────────────────────────────────────────
+    conc      n    mean ms     p95 ms     p99 ms       req/s
+────────────────────────────────────────────────────────────────────────
+       2     24       77.6      147.4      148.0       25.70
+       4     24      132.8      222.9      223.6       30.02
+       8     24      243.2      302.9      306.2       32.58
+────────────────────────────────────────────────────────────────────────
+
+[ctc] Poisson  (rate=4.0 req/s  dur=12s)
+  baseline                   n=36  mean=60.1ms  p95=77.2ms
+  lang_hi_en                 n=49  mean=69.0ms  p95=89.7ms
+  word_boost_default         n=44  mean=68.2ms  p95=84.5ms
+  kw_boost_default           n=53  mean=85.0ms  p95=117.7ms
+  full_pipeline              n=50  mean=88.2ms  p95=123.9ms
+
+════════════════════════════════════════════════════════════════════════
+  Poisson — strategy=ctc  rate=4.0 req/s  dur=12s
+────────────────────────────────────────────────────────────────────────
+  Scenario                        n    mean ms     p95 ms     p99 ms     RTF
+────────────────────────────────────────────────────────────────────────
+  baseline                       36       60.1       77.2       77.9   0.006
+  lang_hi_en                     49       69.0       89.7      106.4   0.007
+  word_boost_default             44       68.2       84.5      108.5   0.007
+  kw_boost_default               53       85.0      117.7      136.6   0.009
+  full_pipeline                  50       88.2      123.9      131.2   0.009
+────────────────────────────────────────────────────────────────────────
+
+[ctc] Stress  (n=200  concurrency=100)
+  Firing 200 simultaneous requests ...
+
+════════════════════════════════════════════════════════════════════════
+  Stress test — strategy=ctc  n=200  concurrency=100
+────────────────────────────────────────────────────────────────────────
+  Sent        : 200
+  Succeeded   : 200  (100.0%)
+  Failed      : 0  (0.0%)
+  Wall time   : 5.34s  (37.5 successful req/s)
+  Server alive after burst: YES ✓
+  Latency (successful): mean=2170.4ms  p95=3259.5ms  p99=3404.3ms  max=3405.5ms
+  Errors: none — server queued all requests successfully.
+────────────────────────────────────────────────────────────────────────
+
+[ctc] Long-audio resilience  (multipliers=[6, 60]  base_dur=10.0s)
+  x6   (60s) ... outcome=ok  latency=318ms  server_alive=True
+  x60  (599s) ... outcome=ok  latency=2060ms  server_alive=True
+
+════════════════════════════════════════════════════════════════════════════════
+  Long-audio / OOM resilience — strategy=ctc
+────────────────────────────────────────────────────────────────────────────────
+       dur   mult    latency ms   server alive  outcome
+────────────────────────────────────────────────────────────────────────────────
+       60s      6x           318          YES ✓  OK       — inference succeeded
+      599s     60x          2060          YES ✓  OK       — inference succeeded
+────────────────────────────────────────────────────────────────────────────────
+  VERDICT: Server survived all long-audio requests — queueing/rejection working correctly ✓
+────────────────────────────────────────────────────────────────────────────────
+
+[ctc] Multi-duration batch test  durations=['2s', '5s', '10s', '15s', '20s', '25s', '30s']  conc=7 (one per duration per round)  n_rounds=8
+  [solo reference] done
+  [concurrent rounds] 
+    round 1/8 done
+    round 2/8 done
+    round 3/8 done
+    round 4/8 done
+    round 5/8 done
+    round 6/8 done
+    round 7/8 done
+    round 8/8 done
+
+══════════════════════════════════════════════════════════════════════════════════════════
+  Multi-duration batch test — strategy=ctc  threshold=20s (above → chunked)
+  Solo: 1 request at a time.  Concurrent: all durations fired simultaneously.
+  'match': do all concurrent transcripts match the solo reference? ok=all match  ~N/M=partial
+──────────────────────────────────────────────────────────────────────────────────────────
+    dur  path       solo mean   solo p95   solo RTF   conc mean   conc p95   errors   match
+──────────────────────────────────────────────────────────────────────────────────────────
+     2s  batch           34.9       35.5      0.017        20.9       22.3        0      ok
+     5s  batch           39.4       39.8      0.008       106.6      529.7        0      ok
+    10s  batch           47.4       47.8      0.005       195.8      562.3        0      ok
+    15s  batch           55.7       56.4      0.004       347.1     1248.4        0      ok
+    20s  batch           65.9       66.3      0.003       343.5     1085.7        0      ok
+    25s  CHUNKED        126.8      129.4      0.005       491.1     1342.4        0      ok
+    30s  CHUNKED        139.6      140.4      0.005       560.9     1186.2        0      ok
+──────────────────────────────────────────────────────────────────────────────────────────
+  All durations completed without errors in concurrent run ✓
+══════════════════════════════════════════════════════════════════════════════════════════
+
+########################################################################
+#  Strategy: rnnt
+########################################################################
+[client] Decoding strategy → rnnt
+
+[rnnt] Sequential  (warmup=3  runs=15  scenarios=17)
+  baseline                   mean=99.7ms  p95=100.7ms  RTF=0.010
+  lang_hi                    mean=111.4ms  p95=112.6ms  RTF=0.011
+  lang_hi_en                 mean=111.5ms  p95=112.5ms  RTF=0.011
+  lang_te                    mean=131.5ms  p95=133.1ms  RTF=0.013
+  lang_te_en                 mean=105.9ms  p95=106.8ms  RTF=0.011
+  blank_penalty_2            mean=104.5ms  p95=106.9ms  RTF=0.010
+  word_boost_default         mean=106.6ms  p95=109.8ms  RTF=0.011
+  word_boost_strong          mean=106.6ms  p95=107.8ms  RTF=0.011
+  word_boost_full            mean=106.2ms  p95=110.6ms  RTF=0.011
+  lang+word_boost            mean=107.3ms  p95=109.3ms  RTF=0.011
+  kw_boost_default           mean=115.8ms  p95=119.9ms  RTF=0.012
+  kw_boost_strong            mean=116.1ms  p95=118.2ms  RTF=0.012
+  kw_boost+lang_te_en        mean=122.0ms  p95=125.9ms  RTF=0.012
+  timestamps                 mean=100.4ms  p95=101.3ms  RTF=0.010
+  timestamps+lang            mean=107.1ms  p95=108.8ms  RTF=0.011
+  timestamps+wb              mean=105.7ms  p95=106.5ms  RTF=0.011
+  full_pipeline              mean=124.3ms  p95=128.3ms  RTF=0.012
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  Sequential — strategy=rnnt  (ms except RTF)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Scenario                      mean       std       p50       p95       p99       min       max       RTF
+────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  baseline                      99.7       0.4      99.6     100.7     100.7      99.2     100.7     0.010
+  lang_hi                      111.4       0.5     111.4     112.6     112.6     110.6     112.6     0.011
+  lang_hi_en                   111.5       0.6     111.4     112.5     112.5     110.6     112.5     0.011
+  lang_te                      131.5       0.7     131.6     133.1     133.1     129.9     133.1     0.013
+  lang_te_en                   105.9       0.5     105.9     106.8     106.8     105.2     106.8     0.011
+  blank_penalty_2              104.5       1.1     104.3     106.9     106.9     102.8     106.9     0.010
+  word_boost_default           106.6       1.1     106.3     109.8     109.8     105.4     109.8     0.011
+  word_boost_strong            106.6       0.7     106.6     107.8     107.8     105.4     107.8     0.011
+  word_boost_full              106.2       1.4     106.0     110.6     110.6     104.7     110.6     0.011
+  lang+word_boost              107.3       1.0     107.0     109.3     109.3     105.7     109.3     0.011
+  kw_boost_default             115.8       1.8     115.1     119.9     119.9     114.5     119.9     0.012
+  kw_boost_strong              116.1       1.1     116.1     118.2     118.2     114.5     118.2     0.012
+  kw_boost+lang_te_en          122.0       1.3     121.5     125.9     125.9     120.5     125.9     0.012
+  timestamps                   100.4       0.5     100.3     101.3     101.3      99.4     101.3     0.010
+  timestamps+lang              107.1       0.6     106.9     108.8     108.8     106.3     108.8     0.011
+  timestamps+wb                105.7       0.5     105.7     106.5     106.5     104.8     106.5     0.011
+  full_pipeline                124.3       2.0     123.7     128.3     128.3     122.0     128.3     0.012
+────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+[rnnt] Concurrent  (baseline  n_total=24  levels=[2, 4, 8])
+  concurrency=2   mean=124.4ms  p95=202.2ms  throughput=16.05 req/s
+  concurrency=4   mean=181.0ms  p95=238.9ms  throughput=22.04 req/s
+  concurrency=8   mean=408.3ms  p95=456.7ms  throughput=19.49 req/s
+
+════════════════════════════════════════════════════════════════════════
+  Concurrent — strategy=rnnt  scenario=baseline  n_total=24
+────────────────────────────────────────────────────────────────────────
+    conc      n    mean ms     p95 ms     p99 ms       req/s
+────────────────────────────────────────────────────────────────────────
+       2     24      124.4      202.2      202.5       16.05
+       4     24      181.0      238.9      238.9       22.04
+       8     24      408.3      456.7      460.8       19.49
+────────────────────────────────────────────────────────────────────────
+
+[rnnt] Poisson  (rate=4.0 req/s  dur=12s)
+  baseline                   n=46  mean=161.7ms  p95=328.7ms
+  lang_hi_en                 n=56  mean=153.1ms  p95=276.3ms
+  word_boost_default         n=39  mean=22.4ms  p95=23.3ms
+  kw_boost_default           n=47  mean=22.1ms  p95=23.2ms
+  full_pipeline              n=56  mean=21.2ms  p95=23.5ms
+
+════════════════════════════════════════════════════════════════════════
+  Poisson — strategy=rnnt  rate=4.0 req/s  dur=12s
+────────────────────────────────────────────────────────────────────────
+  Scenario                        n    mean ms     p95 ms     p99 ms     RTF
+────────────────────────────────────────────────────────────────────────
+  baseline                       46      161.7      328.7      384.9   0.016
+  lang_hi_en                     56      153.1      276.3      281.5   0.015
+  word_boost_default             39       22.4       23.3       23.9   0.002
+  kw_boost_default               47       22.1       23.2       23.3   0.002
+  full_pipeline                  56       21.2       23.5       23.5   0.002
+────────────────────────────────────────────────────────────────────────
+
+[rnnt] Stress  (n=200  concurrency=100)
+  Firing 200 simultaneous requests ...
+
+════════════════════════════════════════════════════════════════════════
+  Stress test — strategy=rnnt  n=200  concurrency=100
+────────────────────────────────────────────────────────────────────────
+  Sent        : 200
+  Succeeded   : 0  (0.0%)
+  Failed      : 200  (100.0%)
+  Wall time   : 0.33s  (0.0 successful req/s)
+  Server alive after burst: YES ✓
+  Error breakdown:
+    [other] ×200  [StatusCode.INTERNAL] GPU context is corrupted (prior CUDA error). Server must b
+────────────────────────────────────────────────────────────────────────
+
+[rnnt] Long-audio resilience  (multipliers=[6, 60]  base_dur=10.0s)
+  x6   (60s) ... outcome=oom_caught  latency=30ms  server_alive=True
+  x60  (599s) ... outcome=oom_caught  latency=132ms  server_alive=True
+
+════════════════════════════════════════════════════════════════════════════════
+  Long-audio / OOM resilience — strategy=rnnt
+────────────────────────────────────────────────────────────────────────────────
+       dur   mult    latency ms   server alive  outcome
+────────────────────────────────────────────────────────────────────────────────
+       60s      6x            30          YES ✓  OOM      — GPU ran out of memory (caught, server alive)
+                                                   └ [StatusCode.INTERNAL] GPU context is corrupted (prior CUDA error). Server must be restarte
+      599s     60x           132          YES ✓  OOM      — GPU ran out of memory (caught, server alive)
+                                                   └ [StatusCode.INTERNAL] GPU context is corrupted (prior CUDA error). Server must be restarte
+────────────────────────────────────────────────────────────────────────────────
+  VERDICT: Server survived all long-audio requests — queueing/rejection working correctly ✓
+────────────────────────────────────────────────────────────────────────────────
+
+[rnnt] Multi-duration batch test  durations=['2s', '5s', '10s', '15s', '20s', '25s', '30s']  conc=7 (one per duration per round)  n_rounds=8
+  [solo reference] Traceback (most recent call last):
+  File [35m"/home/ubuntu/Vallabh/combined_implementation/latency_testing.py"[0m, line [35m1027[0m, in [35m<module>[0m
+    [31mmain[0m[1;31m()[0m
+    [31m~~~~[0m[1;31m^^[0m
+  File [35m"/home/ubuntu/Vallabh/combined_implementation/latency_testing.py"[0m, line [35m1003[0m, in [35mmain[0m
+    solo_res = measure_multi_duration_solo(_clips, n_warmup=1, n_runs=3)
+  File [35m"/home/ubuntu/Vallabh/combined_implementation/latency_testing.py"[0m, line [35m754[0m, in [35mmeasure_multi_duration_solo[0m
+    [31mfn[0m[1;31m()[0m
+    [31m~~[0m[1;31m^^[0m
+  File [35m"/home/ubuntu/Vallabh/combined_implementation/latency_testing.py"[0m, line [35m752[0m, in [35m<lambda>[0m
+    fn = lambda a=audio: [31minfer[0m[1;31m(a)[0m
+                         [31m~~~~~[0m[1;31m^^^[0m
+  File [35m"/home/ubuntu/Vallabh/combined_implementation/latency_testing.py"[0m, line [35m201[0m, in [35minfer[0m
+    result = client.infer(MODEL_NAME, inputs, outputs=outputs,
+                          client_timeout=timeout_s)
+  File [35m"/home/ubuntu/miniconda3/lib/python3.13/site-packages/tritonclient/grpc/_client.py"[0m, line [35m1572[0m, in [35minfer[0m
+    [31mraise_error_grpc[0m[1;31m(rpc_error)[0m
+    [31m~~~~~~~~~~~~~~~~[0m[1;31m^^^^^^^^^^^[0m
+  File [35m"/home/ubuntu/miniconda3/lib/python3.13/site-packages/tritonclient/grpc/_utils.py"[0m, line [35m77[0m, in [35mraise_error_grpc[0m
+    raise get_error_grpc(rpc_error) from None
+[1;35mtritonclient.utils.InferenceServerException[0m: [35m[StatusCode.INTERNAL] GPU context is corrupted (prior CUDA error). Server must be restarted to recover.[0m
+[?2004h(base) ]0;ubuntu@xtts-t4: ~/Vallabh/combined_implementation[01;32mubuntu@xtts-t4[00m:[01;34m~/Vallabh/combined_implementation[00m$ exit
+[?2004lexit
+
+Script done on 2026-04-05 06:55:32+00:00 [COMMAND_EXIT_CODE="1"]
